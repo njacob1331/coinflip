@@ -16,6 +16,10 @@ pub type Writer = SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, WsMessag
 pub type Reader = SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>;
 pub type WsMessage = tokio_tungstenite::tungstenite::Message;
 
+pub fn is_array(bytes: &[u8]) -> bool {
+    matches!(bytes, [b'[', .., b']'])
+}
+
 pub struct Ws;
 
 impl Ws {
