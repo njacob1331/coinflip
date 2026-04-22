@@ -13,6 +13,12 @@ use tokio::{
     task::JoinHandle,
 };
 
+// need to add CritialPriority logic
+// this is especially important for intercepting orders which have been sent into the channel buffer but
+// for some reason should no longer be sent to the websocket
+// an idea would be to carry order ids in the CriticalPriority request and, when received,
+// remove the Requests matching those ids from the priority queue thereby discarding them altogether
+
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub enum Request {
     LowPriority(String),
