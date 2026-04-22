@@ -10,7 +10,7 @@ use tokio::{net::TcpStream, task::JoinHandle};
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 use url::Url;
 
-use crate::common::{Parser, Router};
+use crate::traits::{Parser, Router};
 
 pub type Writer = SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, WsMessage>;
 pub type Reader = SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>;
@@ -23,19 +23,15 @@ impl Ws {
         let url = Url::parse(url).expect("invalid ws url: {url}");
         let (stream, _) = connect_async(url).await?;
 
-        println!("ws connected");
         Ok(stream.split())
     }
 
     pub fn spawn_writer(mut writer: Writer, rx: AsyncReceiver<String>) -> JoinHandle<Result<()>> {
         tokio::spawn(async move {
-            println!("writer started");
-
             while let Ok(request) = rx.recv().await {
                 writer.send(WsMessage::Text(request)).await?
             }
 
-            println!("ws writer exiting");
             Ok(())
         })
     }
@@ -51,9 +47,7 @@ impl Ws {
         M: Send + 'static,
     {
         tokio::spawn(async move {
-            println!("reader started");
             while let Some(msg) = reader.next().await {
-                println!("{:#?}", msg);
                 match msg {
                     Ok(WsMessage::Text(text)) => match parser.parse(text.as_bytes()) {
                         Ok(msg) => {
@@ -61,7 +55,7 @@ impl Ws {
                                 return Err(anyhow!("ws reader send error: {e}"));
                             }
                         }
-                        Err(e) => eprintln!("parse error: {e}"),
+                        Err(e) => tracing::error!("failed to parse ws message: {e}"),
                     },
                     Ok(WsMessage::Binary(bytes)) => match parser.parse(&bytes) {
                         Ok(msg) => {
@@ -69,7 +63,7 @@ impl Ws {
                                 return Err(anyhow!("ws reader send error: {e}"));
                             }
                         }
-                        Err(e) => eprintln!("parse error: {e}"),
+                        Err(e) => tracing::error!("failed to parse ws message: {e}"),
                     },
                     Ok(WsMessage::Close(frame)) => {
                         return Err(anyhow!("ws closed by server: {frame:?}"));
@@ -80,8 +74,6 @@ impl Ws {
                     _ => {}
                 }
             }
-
-            println!("ws reader exiting");
 
             Ok(())
         })

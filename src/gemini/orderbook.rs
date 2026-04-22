@@ -1,8 +1,7 @@
+use rust_decimal::Decimal;
 use std::collections::BTreeMap;
 
-use rust_decimal::Decimal;
-
-use crate::common::OrderbookUpdate;
+use crate::gemini::messages::OrderbookUpdate;
 
 #[derive(Debug, Clone)]
 pub struct Orderbook {

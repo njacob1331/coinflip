@@ -1,5 +1,5 @@
 use crate::{
-    common::{Parser, Router},
+    traits::{Parser, Router},
     ws::Ws,
 };
 use anyhow::Result;
@@ -138,6 +138,7 @@ where
         let retry_interval = Duration::from_secs(1);
 
         loop {
+            tracing::info!("starting ws connection @ {url}");
             match Session::new(url, self.parser.clone(), self.router.clone()).await {
                 Ok(mut session) => session.run(&mut self.request_rx).await,
                 Err(e) => println!("failed to start ws session: {e}"),
@@ -146,8 +147,8 @@ where
             // notify that the connection died
             self.connection_reset.notify_waiters();
 
-            println!(
-                "ws disconnected, reconnecting in {} secs...",
+            tracing::info!(
+                "ws @ {url} disconnected, reconnecting in {} secs...",
                 retry_interval.as_secs()
             );
 

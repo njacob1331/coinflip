@@ -13,10 +13,9 @@ use tokio::sync::{
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    common::OrderbookUpdate,
     gemini::{
-        client::GeminiClient, messages::GeminiParser, orderbook::Orderbook, poll::MarketPoller,
-        router::GeminiRouter,
+        client::GeminiClient, messages::OrderbookUpdate, orderbook::Orderbook,
+        parser::GeminiParser, poll::MarketPoller, router::GeminiRouter,
     },
     session::{Request, SessionManager},
 };
@@ -60,12 +59,18 @@ impl BookKeeper {
 
     fn update_books(&self, update: OrderbookUpdate) {
         if self.corrupted.contains(&update.symbol) {
+            if update.first_update_id == update.last_update_id {
+                tracing::info!("new snapshot recieved for {}", &update.symbol);
+                self.orderbooks
+                    .insert(update.symbol.clone(), Orderbook::from_snapshot(update));
+            }
+
             return;
         }
 
         if let Some(mut book) = self.orderbooks.get_mut(&update.symbol) {
             if !book.is_valid_sequence(&update) {
-                println!("invalid sequence detected");
+                tracing::info!("invalid sequence detected for {}", &update.symbol);
                 self.orderbooks.remove(&update.symbol);
                 self.corrupted.insert(update.symbol);
                 self.resub_notification.notify_one();
@@ -86,8 +91,6 @@ impl BookKeeper {
         mut orderbook_rx: Receiver<OrderbookUpdate>,
         connection_reset: Arc<Notify>,
     ) {
-        println!("exchange consumer ready");
-
         loop {
             tokio::select! {
                 feed = orderbook_rx.recv() => {
@@ -105,14 +108,26 @@ impl BookKeeper {
     }
 }
 
+use tracing_subscriber::{EnvFilter, fmt};
+
+fn init_tracing() {
+    let filter = EnvFilter::new("coinflip=debug");
+
+    fmt()
+        .with_env_filter(filter)
+        .with_target(false) // optional: hides module paths
+        .init();
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
+    init_tracing();
+
     let shutdown = CancellationToken::new();
     let connection_reset = Arc::new(Notify::new());
 
     let (request_tx, request_rx) = mpsc::channel::<Request>(32);
     let order_tx = request_tx.clone();
-    // let (feed_tx, feed_rx) = mpsc::channel::<Message>(256);
 
     let parser = GeminiParser::new();
     let mut router = GeminiRouter::new();

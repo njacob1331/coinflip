@@ -1,7 +1,10 @@
 use async_trait::async_trait;
 use tokio::sync::mpsc::{Receiver, Sender, channel};
 
-use crate::common::{Message, OrderbookUpdate, Router};
+use crate::{
+    gemini::messages::{Message, OrderbookUpdate},
+    traits::Router,
+};
 
 pub struct GeminiRouter {
     orderbook_tx: Sender<OrderbookUpdate>,

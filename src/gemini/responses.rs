@@ -3,12 +3,6 @@ use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
 #[derive(Debug, Deserialize)]
-pub struct GetEventByTicker {
-    #[serde(default)]
-    pub contracts: Vec<Contract>,
-}
-
-#[derive(Debug, Deserialize)]
 pub struct ListMarketEvents {
     #[serde(default)]
     pub data: Vec<Event>,
