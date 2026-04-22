@@ -59,8 +59,12 @@ impl BookKeeper {
 
     fn update_books(&self, update: OrderbookUpdate) {
         if self.corrupted.contains(&update.symbol) {
+            // if we have a symbol "blacklisted" and we receive a new snapshot,
+            // that means the subscription manager did its job and resubscribed for us
+            // at this point we can remove the symbol from the corrupted set and maintain the book
             if update.first_update_id == update.last_update_id {
                 tracing::info!("new snapshot recieved for {}", &update.symbol);
+                self.corrupted.remove(&update.symbol);
                 self.orderbooks
                     .insert(update.symbol.clone(), Orderbook::from_snapshot(update));
             }
