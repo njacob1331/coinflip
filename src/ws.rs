@@ -27,6 +27,12 @@ impl Ws {
     }
 
     pub fn spawn_writer(mut writer: Writer, rx: AsyncReceiver<String>) -> JoinHandle<Result<()>> {
+        // add resusable request string buffer
+        // final serialization to String should occur right before sending the message
+        // ex
+        // let mut buf = String::with_capacity(capacity);
+        // sonic_rs::to_writer(&mut buf, &request)?;
+        
         tokio::spawn(async move {
             while let Ok(request) = rx.recv().await {
                 writer.send(WsMessage::Text(request)).await?
