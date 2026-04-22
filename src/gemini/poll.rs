@@ -113,14 +113,13 @@ impl MarketPoller {
 
                 _ = self.resub_notification.notified() => {
 
-                    for resub in self.resub_list.iter() {
-                        let request = self.build_request_raw("unsubscribe", resub.key());
+                    let keys: Vec<_> = self.resub_list.iter().map(|e| e.key().clone()).collect();
+                    for key in keys {
+                        let request = self.build_request_raw("unsubscribe", &key);
                         let _ = self.request_tx.send(request).await;
 
-                        let request = self.build_request_raw("subscribe", resub.key());
+                        let request = self.build_request_raw("subscribe", &key);
                         let _ = self.request_tx.send(request).await;
-
-                        self.resub_list.remove(resub.key());
                     }
 
 
