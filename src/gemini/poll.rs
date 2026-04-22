@@ -115,6 +115,11 @@ impl MarketPoller {
 
                     let keys: Vec<_> = self.resub_list.iter().map(|e| e.key().clone()).collect();
                     for key in keys {
+                        // need to refactor to package the unsubscribe and subscribe requests into
+                        // a single json array
+                        // this ensures the ordering of the resub requests 
+                        // ws will handle detecting array
+
                         let request = self.build_request_raw("unsubscribe", &key);
                         let _ = self.request_tx.send(request).await;
 
