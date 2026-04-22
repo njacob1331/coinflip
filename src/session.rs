@@ -19,6 +19,9 @@ use tokio::{
 // an idea would be to carry order ids in the CriticalPriority request and, when received,
 // remove the Requests matching those ids from the priority queue thereby discarding them altogether
 
+// Request should also carry a generic T instead of String
+// the bounds here are that T: Serialize + Into<Request> 
+
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub enum Request {
     LowPriority(String),
