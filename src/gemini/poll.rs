@@ -2,17 +2,16 @@ use std::{sync::Arc, time::Duration};
 
 use anyhow::Result;
 use dashmap::{DashMap, DashSet};
-use serde_json::json;
 use tokio::sync::{Notify, mpsc::Sender};
 
 use crate::{
-    gemini::{client::GeminiClient, responses::Contract},
+    gemini::{client::GeminiClient, messages::Subscriptions, responses::Contract},
     session::Request,
 };
 
 pub struct MarketPoller {
     api_client: Arc<GeminiClient>,
-    request_tx: Sender<Request>,
+    request_tx: Sender<Request<Subscriptions>>,
     resub_notification: Arc<Notify>,
     resub_list: Arc<DashSet<String>>,
     subscriptions: DashMap<String, Contract>,
@@ -21,7 +20,7 @@ pub struct MarketPoller {
 impl MarketPoller {
     pub fn new(
         api_client: Arc<GeminiClient>,
-        request_tx: Sender<Request>,
+        request_tx: Sender<Request<Subscriptions>>,
         resub_notification: Arc<Notify>,
         resub_list: Arc<DashSet<String>>,
     ) -> Self {
@@ -34,32 +33,30 @@ impl MarketPoller {
         }
     }
 
-    pub fn build_request(&self, method: &str, contract: &Contract) -> Request {
-        let body = json!(
-            {
-              "id": format!("{}", contract.instrument_symbol),
-              "method": method,
-              "params": [
-                format!("{}@depth@100ms", contract.instrument_symbol)
-              ]
-            }
-        )
-        .to_string();
+    pub fn build_request(&self, method: &str, contract: &Contract) -> Request<Subscriptions> {
+        let body = Subscriptions::Subscribe {
+            id: contract.instrument_symbol.clone(),
+            method: method.to_string(),
+            params: [format!("{}@depth@100ms", contract.instrument_symbol)],
+        };
 
         Request::LowPriority(body)
     }
 
-    pub fn build_request_raw(&self, method: &str, stream: &str) -> Request {
-        let body = json!(
-            {
-              "id": stream,
-              "method": method,
-              "params": [
-                format!("{}@depth@100ms", stream)
-              ]
-            }
-        )
-        .to_string();
+    pub fn build_request_raw(&self, method: &str, stream: &str) -> Request<Subscriptions> {
+        let method = match method {
+            "subscribe" => "subscribe".to_string(),
+            "unsubscribe" => "unsubscribe".to_string(),
+            _ => "unknown".to_string(),
+        };
+
+        let stream = stream.to_string();
+
+        let body = Subscriptions::Subscribe {
+            id: stream.clone(),
+            method,
+            params: [format!("{}@depth@100ms", stream)],
+        };
 
         Request::LowPriority(body)
     }
@@ -117,7 +114,7 @@ impl MarketPoller {
                     for key in keys {
                         // need to refactor to package the unsubscribe and subscribe requests into
                         // a single json array
-                        // this ensures the ordering of the resub requests 
+                        // this ensures the ordering of the resub requests
                         // ws will handle detecting array
 
                         let request = self.build_request_raw("unsubscribe", &key);

@@ -4,6 +4,7 @@ use crate::{
 };
 use anyhow::Result;
 use kanal::AsyncSender;
+use serde::Serialize;
 use std::{collections::BinaryHeap, sync::Arc, time::Duration};
 use tokio::{
     sync::{
@@ -13,23 +14,45 @@ use tokio::{
     task::JoinHandle,
 };
 
-// need to add CritialPriority logic
-// this is especially important for intercepting orders which have been sent into the channel buffer but
-// for some reason should no longer be sent to the websocket
-// an idea would be to carry order ids in the CriticalPriority request and, when received,
-// remove the Requests matching those ids from the priority queue thereby discarding them altogether
-
-// Request should also carry a generic T instead of String
-// the bounds here are that T: Serialize + Into<Request>
-
-#[derive(Debug, Eq, PartialEq, Ord, PartialOrd)]
-pub enum Request {
-    LowPriority(String),
-    HighPriority(String),
+#[derive(Debug)]
+pub enum Request<T> {
+    LowPriority(T),
+    HighPriority(T),
 }
 
-impl Request {
-    pub fn into_msg(self) -> String {
+impl<T> Ord for Request<T> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        use Request::*;
+        use std::cmp::Ordering::*;
+
+        match (self, other) {
+            (HighPriority(_), LowPriority(_)) => Greater,
+            (LowPriority(_), HighPriority(_)) => Less,
+            _ => Equal,
+        }
+    }
+}
+
+impl<T> PartialOrd for Request<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<T> PartialEq for Request<T> {
+    fn eq(&self, other: &Self) -> bool {
+        matches!(
+            (self, other),
+            (Request::HighPriority(_), Request::HighPriority(_))
+                | (Request::LowPriority(_), Request::LowPriority(_))
+        )
+    }
+}
+
+impl<T> Eq for Request<T> {}
+
+impl<T> Request<T> {
+    pub fn into_msg(self) -> T {
         match self {
             Request::HighPriority(msg) => msg,
             Request::LowPriority(msg) => msg,
@@ -37,14 +60,17 @@ impl Request {
     }
 }
 
-struct Session {
-    session_tx: AsyncSender<String>,
-    pq: BinaryHeap<Request>,
+struct Session<T> {
+    session_tx: AsyncSender<Request<T>>,
+    pq: BinaryHeap<Request<T>>,
     writer_handle: JoinHandle<Result<()>>,
     reader_handle: JoinHandle<Result<()>>,
 }
 
-impl Session {
+impl<T> Session<T>
+where
+    T: Serialize + Send + 'static,
+{
     async fn new<P, M, R>(url: &str, parser: Arc<P>, router: Arc<R>) -> Result<Self>
     where
         P: Parser<M> + Send + 'static,
@@ -52,7 +78,7 @@ impl Session {
         M: Send + 'static,
     {
         let (writer, reader) = Ws::connect(url).await?;
-        let (session_tx, session_rx) = kanal::bounded_async::<String>(8);
+        let (session_tx, session_rx) = kanal::bounded_async::<Request<T>>(8);
 
         Ok(Self {
             session_tx,
@@ -64,7 +90,7 @@ impl Session {
 
     async fn forward_from_queue(&mut self) -> Result<()> {
         if let Some(req) = self.pq.pop() {
-            self.session_tx.send(req.into_msg()).await?;
+            self.session_tx.send(req).await?;
         }
         Ok(())
     }
@@ -74,7 +100,10 @@ impl Session {
         self.reader_handle.abort();
     }
 
-    async fn run(&mut self, request_rx: &mut Receiver<Request>) {
+    async fn run(&mut self, request_rx: &mut Receiver<Request<T>>)
+    where
+        T: Serialize,
+    {
         loop {
             tokio::select! {
                 res = &mut self.writer_handle => {
@@ -111,22 +140,24 @@ impl Session {
 
 pub struct SessionManager {
     connection_reset: Arc<Notify>,
-    request_rx: Receiver<Request>,
 }
 
 impl SessionManager {
-    pub fn new(connection_reset: Arc<Notify>, request_rx: Receiver<Request>) -> Self {
-        Self {
-            connection_reset,
-            request_rx,
-        }
+    pub fn new(connection_reset: Arc<Notify>) -> Self {
+        Self { connection_reset }
     }
 
-    pub async fn run<P, M, R>(&mut self, url: &str, parser: P, router: R)
-    where
+    pub async fn run<P, R, M, T>(
+        &mut self,
+        url: &str,
+        parser: P,
+        router: R,
+        mut request_tx: Receiver<Request<T>>,
+    ) where
         P: Parser<M> + Send + 'static,
         R: Router<M> + Send + 'static,
         M: Send + 'static,
+        T: Serialize + Send + 'static,
     {
         let parser = Arc::new(parser);
         let router = Arc::new(router);
@@ -135,7 +166,7 @@ impl SessionManager {
         loop {
             tracing::info!("starting ws connection @ {url}");
             match Session::new(url, parser.clone(), router.clone()).await {
-                Ok(mut session) => session.run(&mut self.request_rx).await,
+                Ok(mut session) => session.run(&mut request_tx).await,
                 Err(e) => println!("failed to start ws session: {e}"),
             }
 

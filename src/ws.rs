@@ -6,11 +6,15 @@ use futures_util::{
     stream::{SplitSink, SplitStream},
 };
 use kanal::AsyncReceiver;
+use serde::Serialize;
 use tokio::{net::TcpStream, task::JoinHandle};
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 use url::Url;
 
-use crate::traits::{Parser, Router};
+use crate::{
+    session::Request,
+    traits::{Parser, Router},
+};
 
 pub type Writer = SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, WsMessage>;
 pub type Reader = SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>;
@@ -30,16 +34,15 @@ impl Ws {
         Ok(stream.split())
     }
 
-    pub fn spawn_writer(mut writer: Writer, rx: AsyncReceiver<String>) -> JoinHandle<Result<()>> {
-        // add resusable request string buffer
-        // final serialization to String should occur right before sending the message
-        // ex
-        // let mut buf = String::with_capacity(capacity);
-        // sonic_rs::to_writer(&mut buf, &request)?;
-        
+    pub fn spawn_writer<T: Serialize + Send + 'static>(
+        mut writer: Writer,
+        rx: AsyncReceiver<Request<T>>,
+    ) -> JoinHandle<Result<()>> {
         tokio::spawn(async move {
             while let Ok(request) = rx.recv().await {
-                writer.send(WsMessage::Text(request)).await?
+                let string = sonic_rs::to_string(&request.into_msg())?;
+                println!("{:#?}", string);
+                writer.send(WsMessage::Text(string)).await?
             }
 
             Ok(())

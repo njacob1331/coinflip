@@ -1,11 +1,17 @@
-use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
-use serde_with::{DisplayFromStr, serde_as};
 
 #[derive(Debug, Serialize)]
-enum Subscriptions {
-    Subscribe,
-    Unsubscribe,
+pub enum Subscriptions {
+    Subscribe {
+        id: String,
+        method: String,
+        params: [String; 1],
+    },
+    Unsubscribe {
+        id: String,
+        method: String,
+        params: [String; 1],
+    },
     List,
 }
 

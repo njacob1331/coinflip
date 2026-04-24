@@ -14,8 +14,12 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     gemini::{
-        client::GeminiClient, messages::OrderbookUpdate, orderbook::Orderbook,
-        parser::GeminiParser, poll::MarketPoller, router::GeminiRouter,
+        client::GeminiClient,
+        messages::{OrderbookUpdate, Subscriptions},
+        orderbook::Orderbook,
+        parser::GeminiParser,
+        poll::MarketPoller,
+        router::GeminiRouter,
     },
     session::{Request, SessionManager},
 };
@@ -130,7 +134,9 @@ async fn main() -> Result<()> {
     let shutdown = CancellationToken::new();
     let connection_reset = Arc::new(Notify::new());
 
-    let (request_tx, request_rx) = mpsc::channel::<Request>(32);
+    // the type on Request should be something like enum GeminiSend
+    // which carries every possible type that can be sent via gemini ws
+    let (request_tx, request_rx) = mpsc::channel::<Request<Subscriptions>>(32);
     let order_tx = request_tx.clone();
 
     let parser = GeminiParser::new();
@@ -139,7 +145,7 @@ async fn main() -> Result<()> {
 
     let mut bookeeper = BookKeeper::new();
     let client = Arc::new(GeminiClient::new());
-    let mut session_manager = SessionManager::new(connection_reset.clone(), request_rx);
+    let mut session_manager = SessionManager::new(connection_reset.clone());
     let mut poller = MarketPoller::new(
         client.clone(),
         request_tx,
@@ -153,7 +159,12 @@ async fn main() -> Result<()> {
 
     let manager_task = tokio::spawn(async move {
         session_manager
-            .run("wss://ws.gemini.com?snapshot=-1", parser, router)
+            .run(
+                "wss://ws.gemini.com?snapshot=-1",
+                parser,
+                router,
+                request_rx,
+            )
             .await;
     });
 
