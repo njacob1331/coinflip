@@ -33,34 +33,6 @@ impl MarketPoller {
         }
     }
 
-    pub fn build_request(&self, method: &str, contract: &Contract) -> Request<Subscriptions> {
-        let body = Subscriptions::Subscribe {
-            id: contract.instrument_symbol.clone(),
-            method: method.to_string(),
-            params: [format!("{}@depth@100ms", contract.instrument_symbol)],
-        };
-
-        Request::LowPriority(body)
-    }
-
-    pub fn build_request_raw(&self, method: &str, stream: &str) -> Request<Subscriptions> {
-        let method = match method {
-            "subscribe" => "subscribe".to_string(),
-            "unsubscribe" => "unsubscribe".to_string(),
-            _ => "unknown".to_string(),
-        };
-
-        let stream = stream.to_string();
-
-        let body = Subscriptions::Subscribe {
-            id: stream.clone(),
-            method,
-            params: [format!("{}@depth@100ms", stream)],
-        };
-
-        Request::LowPriority(body)
-    }
-
     pub async fn poll(&mut self) -> Result<()> {
         println!("Performing scheduled api poll for Gemini");
         let poll_markets: Vec<Contract> = self
@@ -86,14 +58,18 @@ impl MarketPoller {
                     continue;
                 } else {
                     // if we have it and its not active, unsub
-                    let request = self.build_request("unsubscribe", &poll_market);
-                    let _ = self.request_tx.send(request).await;
                     self.subscriptions.remove(&poll_market.instrument_symbol);
+                    let _ = self
+                        .request_tx
+                        .send(Subscriptions::Unsubscribe(poll_market.instrument_symbol).into())
+                        .await;
                 }
             } else if poll_market.status == "active" {
                 // subscribe
-                let request = self.build_request("subscribe", &poll_market);
-                let _ = self.request_tx.send(request).await;
+                let _ = self
+                    .request_tx
+                    .send(Subscriptions::Resubscribe(poll_market.instrument_symbol.clone()).into())
+                    .await;
                 self.subscriptions
                     .insert(poll_market.instrument_symbol.clone(), poll_market);
             }
@@ -109,22 +85,10 @@ impl MarketPoller {
                 biased;
 
                 _ = self.resub_notification.notified() => {
-
                     let keys: Vec<_> = self.resub_list.iter().map(|e| e.key().clone()).collect();
                     for key in keys {
-                        // need to refactor to package the unsubscribe and subscribe requests into
-                        // a single json array
-                        // this ensures the ordering of the resub requests
-                        // ws will handle detecting array
-
-                        let request = self.build_request_raw("unsubscribe", &key);
-                        let _ = self.request_tx.send(request).await;
-
-                        let request = self.build_request_raw("subscribe", &key);
-                        let _ = self.request_tx.send(request).await;
+                        let _ = self.request_tx.send(Subscriptions::Resubscribe(key).into()).await;
                     }
-
-
                 },
                 _ = interval.tick() => {
                     if let Err(e) = self.poll().await {

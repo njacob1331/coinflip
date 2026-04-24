@@ -16,8 +16,17 @@ use tokio::{
 
 #[derive(Debug)]
 pub enum Request<T> {
-    LowPriority(T),
-    HighPriority(T),
+    LowPriority { batch: bool, inner: T },
+    HighPriority { batch: bool, inner: T },
+}
+
+impl<T> Request<T> {
+    pub fn split(self) -> (bool, T) {
+        match self {
+            Request::HighPriority { batch, inner } => (batch, inner),
+            Request::LowPriority { batch, inner } => (batch, inner),
+        }
+    }
 }
 
 impl<T> Ord for Request<T> {
@@ -26,8 +35,8 @@ impl<T> Ord for Request<T> {
         use std::cmp::Ordering::*;
 
         match (self, other) {
-            (HighPriority(_), LowPriority(_)) => Greater,
-            (LowPriority(_), HighPriority(_)) => Less,
+            (HighPriority { .. }, LowPriority { .. }) => Greater,
+            (LowPriority { .. }, HighPriority { .. }) => Less,
             _ => Equal,
         }
     }
@@ -43,22 +52,13 @@ impl<T> PartialEq for Request<T> {
     fn eq(&self, other: &Self) -> bool {
         matches!(
             (self, other),
-            (Request::HighPriority(_), Request::HighPriority(_))
-                | (Request::LowPriority(_), Request::LowPriority(_))
+            (Request::HighPriority { .. }, Request::HighPriority { .. })
+                | (Request::LowPriority { .. }, Request::LowPriority { .. })
         )
     }
 }
 
 impl<T> Eq for Request<T> {}
-
-impl<T> Request<T> {
-    pub fn into_msg(self) -> T {
-        match self {
-            Request::HighPriority(msg) => msg,
-            Request::LowPriority(msg) => msg,
-        }
-    }
-}
 
 struct Session<T> {
     session_tx: AsyncSender<Request<T>>,

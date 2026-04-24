@@ -16,13 +16,49 @@ use crate::{
     traits::{Parser, Router},
 };
 
+pub fn split_json_array(raw: &str) -> Vec<&str> {
+    let bytes = raw.as_bytes();
+    let mut depth = 0;
+    let mut start = 0;
+    let mut out = Vec::new();
+    let mut in_string = false;
+    let mut escape = false;
+
+    for (i, &b) in bytes.iter().enumerate() {
+        if escape {
+            escape = false;
+            continue;
+        }
+
+        match b {
+            b'\\' => {
+                escape = true;
+            }
+            b'"' => {
+                in_string = !in_string;
+            }
+            b'{' if !in_string => {
+                if depth == 0 {
+                    start = i;
+                }
+                depth += 1;
+            }
+            b'}' if !in_string => {
+                depth -= 1;
+                if depth == 0 {
+                    out.push(&raw[start..=i]);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    out
+}
+
 pub type Writer = SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, WsMessage>;
 pub type Reader = SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>;
 pub type WsMessage = tokio_tungstenite::tungstenite::Message;
-
-pub fn is_array(bytes: &[u8]) -> bool {
-    matches!(bytes, [b'[', .., b']'])
-}
 
 pub struct Ws;
 
@@ -40,9 +76,16 @@ impl Ws {
     ) -> JoinHandle<Result<()>> {
         tokio::spawn(async move {
             while let Ok(request) = rx.recv().await {
-                let string = sonic_rs::to_string(&request.into_msg())?;
-                println!("{:#?}", string);
-                writer.send(WsMessage::Text(string)).await?
+                let (is_batch, inner) = request.split();
+                let json = sonic_rs::to_string(&inner)?;
+
+                if is_batch {
+                    for j in split_json_array(&json) {
+                        writer.send(WsMessage::Text(j.to_owned())).await?
+                    }
+                } else {
+                    writer.send(WsMessage::Text(json)).await?
+                }
             }
 
             Ok(())

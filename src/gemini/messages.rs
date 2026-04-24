@@ -1,18 +1,86 @@
-use serde::{Deserialize, Serialize};
+use serde::{
+    Deserialize, Serialize, Serializer,
+    ser::{SerializeSeq, SerializeStruct},
+};
 
-#[derive(Debug, Serialize)]
+use crate::session::Request;
+
+#[derive(Debug)]
 pub enum Subscriptions {
-    Subscribe {
-        id: String,
-        method: String,
-        params: [String; 1],
-    },
-    Unsubscribe {
-        id: String,
-        method: String,
-        params: [String; 1],
-    },
-    List,
+    Subscribe(String),
+    Unsubscribe(String),
+    Resubscribe(String),
+}
+
+impl Into<Request<Subscriptions>> for Subscriptions {
+    fn into(self) -> Request<Subscriptions> {
+        match self {
+            Self::Resubscribe(_) => Request::LowPriority {
+                batch: true,
+                inner: self,
+            },
+
+            _ => Request::LowPriority {
+                batch: false,
+                inner: self,
+            },
+        }
+    }
+}
+
+use serde_json::json;
+
+impl Serialize for Subscriptions {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        fn channel_for(stream: &str) -> String {
+            let mut s = String::with_capacity(stream.len() + 12);
+            s.push_str(stream);
+            s.push_str("@depth@100ms");
+            s
+        }
+
+        fn serialize_single<S: Serializer>(
+            serializer: S,
+            stream: &str,
+            method: &str,
+        ) -> Result<S::Ok, S::Error> {
+            let mut state = serializer.serialize_struct("Subscriptions", 3)?;
+            let channel = channel_for(stream);
+
+            state.serialize_field("id", stream)?;
+            state.serialize_field("method", method)?;
+            state.serialize_field("params", &[channel])?;
+            state.end()
+        }
+
+        match self {
+            Self::Subscribe(stream) => serialize_single(serializer, stream, "subscribe"),
+            Self::Unsubscribe(stream) => serialize_single(serializer, stream, "unsubscribe"),
+
+            Self::Resubscribe(stream) => {
+                let channel = channel_for(stream);
+
+                let mut seq = serializer.serialize_seq(Some(2))?;
+
+                seq.serialize_element(&json!({
+                    "id": stream,
+                    "method": "unsubscribe",
+                    "params": [channel.clone()]
+                }))?;
+
+                seq.serialize_element(&json!({
+                    "id": stream,
+                    "method": "subscribe",
+                    "params": [channel]
+                }))?;
+
+                seq.end()
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -34,32 +102,6 @@ pub struct SubscriptionStatus {
     pub status: i16,
     pub error: Option<SubscriptionError>,
 }
-
-// #[serde_as]
-// #[derive(Debug, Clone, Deserialize)]
-// pub struct OrderbookUpdate {
-//     // #[serde(rename = "e")]
-//     // pub event_type: String,
-
-//     // #[serde(rename = "E")]
-//     // pub event_time_ns: u64,
-//     #[serde(rename = "s")]
-//     pub symbol: String,
-
-//     #[serde(rename = "U")]
-//     pub first_update_id: u64,
-
-//     #[serde(rename = "u")]
-//     pub last_update_id: u64,
-
-//     #[serde(rename = "b")]
-//     #[serde_as(as = "Vec<(DisplayFromStr, DisplayFromStr)>")]
-//     pub bids: Vec<(Decimal, Decimal)>,
-
-//     #[serde(rename = "a")]
-//     #[serde_as(as = "Vec<(DisplayFromStr, DisplayFromStr)>")]
-//     pub asks: Vec<(Decimal, Decimal)>,
-// }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct OrderbookUpdate {
