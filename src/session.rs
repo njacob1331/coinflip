@@ -20,7 +20,7 @@ use tokio::{
 // remove the Requests matching those ids from the priority queue thereby discarding them altogether
 
 // Request should also carry a generic T instead of String
-// the bounds here are that T: Serialize + Into<Request> 
+// the bounds here are that T: Serialize + Into<Request>
 
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub enum Request {
@@ -109,46 +109,32 @@ impl Session {
     }
 }
 
-pub struct SessionManager<P, M, R>
-where
-    P: Parser<M> + Send + 'static,
-    R: Router<M> + Send + 'static,
-    M: Send + 'static,
-{
+pub struct SessionManager {
     connection_reset: Arc<Notify>,
     request_rx: Receiver<Request>,
-    parser: Arc<P>,
-    router: Arc<R>,
-    _marker: std::marker::PhantomData<M>,
 }
 
-impl<P, M, R> SessionManager<P, M, R>
-where
-    P: Parser<M> + Send + 'static,
-    R: Router<M> + Send + 'static,
-    M: Send + 'static,
-{
-    pub fn new(
-        connection_reset: Arc<Notify>,
-        request_rx: Receiver<Request>,
-        parser: P,
-        router: R,
-    ) -> Self {
+impl SessionManager {
+    pub fn new(connection_reset: Arc<Notify>, request_rx: Receiver<Request>) -> Self {
         Self {
             connection_reset,
             request_rx,
-            parser: Arc::new(parser),
-            router: Arc::new(router),
-            _marker: std::marker::PhantomData,
         }
     }
 
-    pub async fn run(&mut self, url: &str) {
+    pub async fn run<P, M, R>(&mut self, url: &str, parser: P, router: R)
+    where
+        P: Parser<M> + Send + 'static,
+        R: Router<M> + Send + 'static,
+        M: Send + 'static,
+    {
+        let parser = Arc::new(parser);
+        let router = Arc::new(router);
         let retry_interval = Duration::from_secs(1);
 
         loop {
             tracing::info!("starting ws connection @ {url}");
-            match Session::new(url, self.parser.clone(), self.router.clone()).await {
+            match Session::new(url, parser.clone(), router.clone()).await {
                 Ok(mut session) => session.run(&mut self.request_rx).await,
                 Err(e) => println!("failed to start ws session: {e}"),
             }

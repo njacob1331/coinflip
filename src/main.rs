@@ -74,7 +74,7 @@ impl BookKeeper {
 
         if let Some(mut book) = self.orderbooks.get_mut(&update.symbol) {
             if !book.is_valid_sequence(&update) {
-                tracing::info!("invalid sequence detected for {}", &update.symbol);
+                // tracing::info!("invalid sequence detected for {}", &update.symbol);
                 self.orderbooks.remove(&update.symbol);
                 self.corrupted.insert(update.symbol);
                 self.resub_notification.notify_one();
@@ -139,8 +139,7 @@ async fn main() -> Result<()> {
 
     let mut bookeeper = BookKeeper::new();
     let client = Arc::new(GeminiClient::new());
-    let mut session_manager =
-        SessionManager::new(connection_reset.clone(), request_rx, parser, router);
+    let mut session_manager = SessionManager::new(connection_reset.clone(), request_rx);
     let mut poller = MarketPoller::new(
         client.clone(),
         request_tx,
@@ -153,7 +152,9 @@ async fn main() -> Result<()> {
     });
 
     let manager_task = tokio::spawn(async move {
-        session_manager.run("wss://ws.gemini.com?snapshot=-1").await;
+        session_manager
+            .run("wss://ws.gemini.com?snapshot=-1", parser, router)
+            .await;
     });
 
     let producer_task = tokio::spawn(async move {
