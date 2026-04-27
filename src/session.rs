@@ -143,8 +143,14 @@ pub struct SessionManager {
 }
 
 impl SessionManager {
-    pub fn new(connection_reset: Arc<Notify>) -> Self {
-        Self { connection_reset }
+    pub fn new() -> Self {
+        Self { 
+            connection_reset: Arc::new(Notify::new())
+        }
+    }
+
+    pub fn connection_listener(&self) -> Arc<Notify> {
+        self.connection_reset.clone()
     }
 
     pub async fn run<P, R, M, T>(
