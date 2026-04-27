@@ -61,7 +61,7 @@ impl BookKeeper {
         self.orderbooks.clear();
     }
 
-    fn update_books(&self, update: OrderbookUpdate) {
+    fn update_books(&self, mut update: OrderbookUpdate) {
         if self.corrupted.contains(&update.symbol) {
             // if we have a symbol "blacklisted" and we receive a new snapshot,
             // that means the subscription manager did its job and resubscribed for us
@@ -70,7 +70,7 @@ impl BookKeeper {
                 tracing::info!("new snapshot recieved for {}", &update.symbol);
                 self.corrupted.remove(&update.symbol);
                 self.orderbooks
-                    .insert(update.symbol.clone(), Orderbook::from_snapshot(update));
+                    .insert(std::mem::take(&mut update.symbol), Orderbook::from_snapshot(update));
             }
 
             return;
@@ -90,7 +90,7 @@ impl BookKeeper {
         }
 
         self.orderbooks
-            .entry(update.symbol.clone())
+            .entry(std::mem::take(&mut update.symbol))
             .or_insert(Orderbook::from_snapshot(update));
     }
 
