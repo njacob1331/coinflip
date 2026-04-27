@@ -132,7 +132,6 @@ async fn main() -> Result<()> {
     init_tracing();
 
     let shutdown = CancellationToken::new();
-    let connection_reset = Arc::new(Notify::new());
 
     // the type on Request should be something like enum GeminiSend
     // which carries every possible type that can be sent via gemini ws
@@ -145,7 +144,8 @@ async fn main() -> Result<()> {
 
     let mut bookeeper = BookKeeper::new();
     let client = Arc::new(GeminiClient::new());
-    let mut session_manager = SessionManager::new(connection_reset.clone());
+    let mut session_manager = SessionManager::new();
+    let connection_listener = session_manager.connection_listener();
     let mut poller = MarketPoller::new(
         client.clone(),
         request_tx,
@@ -154,7 +154,7 @@ async fn main() -> Result<()> {
     );
 
     let consumer_task = tokio::spawn(async move {
-        bookeeper.run(orderbook_rx, connection_reset.clone()).await;
+        bookeeper.run(orderbook_rx, connection_listener).await;
     });
 
     let manager_task = tokio::spawn(async move {
