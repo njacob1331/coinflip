@@ -45,6 +45,11 @@ impl MarketPoller {
         let events = self.api_client.list_prediction_market_events().await?;
 
         // need logic to remove symbols in subscriptions which no longer appear in api response
+        // additionally, it probably makes sense to handle removing 'dead' orderbooks here too
+        // if orderbooks is Arc<DashMap>, whenever we do a poll we can remove from orderbooks the symbols
+        // which we are unsubscribing from
+        // we shouldn't run into any contention here because if the contract is no longer active, BookKeeper
+        // will no longer be receiving data for that symbol and therefore will not be accessing it
 
         for mut event in events {
             // check if we have this market in our sub map
