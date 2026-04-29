@@ -76,6 +76,18 @@ impl Ws {
     ) -> JoinHandle<Result<()>> {
         tokio::spawn(async move {
             while let Ok(request) = rx.recv().await {
+                // ideal pattern
+                // match request.inner() {
+                //     Payload::Single(p) => {
+                //         let json = sonic_rs::to_string(&p)?;
+                //         writer.send(WsMessage::Text(json)).await?
+                //     }
+                //     Payload::Batch(p) => {
+                //         for json in p {
+                //            send each
+                //         }
+                //     }
+                // }
                 let (is_batch, inner) = request.split();
                 let json = sonic_rs::to_string(&inner)?;
 
