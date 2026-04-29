@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use anyhow::Result;
 use dashmap::{DashMap, DashSet};
@@ -22,7 +22,7 @@ pub struct MarketPoller {
     request_tx: Sender<Request<Subscriptions>>,
     resub_rx: Receiver<String>,
     subscriptions: DashMap<String, Event>,
-    contract_to_event_index: HashMap<String, String>
+    contract_to_event_index: HashMap<String, String>,
 }
 
 impl MarketPoller {
@@ -36,11 +36,11 @@ impl MarketPoller {
             request_tx,
             resub_rx,
             subscriptions: DashMap::new(),
-            contract_to_event_index: HashMap::new()
+            contract_to_event_index: HashMap::new(),
         }
     }
 
-    pub async fn poll(&self) -> Result<()> {
+    pub async fn poll(&mut self) -> Result<()> {
         println!("Performing scheduled api poll for Gemini");
         let events = self.api_client.list_prediction_market_events().await?;
 
@@ -57,9 +57,9 @@ impl MarketPoller {
                     self.subscriptions.remove(&event.ticker);
 
                     for contract in event.contracts {
+                        self.contract_to_event_index
+                            .remove(&contract.instrument_symbol);
 
-                        self.contract_to_event_index.remove(&contract.instrument_symbol);
-                        
                         self.request_tx
                             .send(
                                 Subscriptions::Unsubscribe(Stream::DifferentialDepth(
@@ -81,10 +81,10 @@ impl MarketPoller {
                             .into(),
                         )
                         .await?;
-                    
+
                     // as a first pass we'll just clone, this should be optimized later
-                    self.contract_to_event_index.insert(contract.instrument_symbol.clone(), event.ticker.clone());
-                    
+                    self.contract_to_event_index
+                        .insert(contract.instrument_symbol.clone(), event.ticker.clone());
                 }
 
                 self.subscriptions
