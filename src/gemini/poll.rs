@@ -22,6 +22,7 @@ pub struct MarketPoller {
     request_tx: Sender<Request<Subscriptions>>,
     resub_rx: Receiver<String>,
     subscriptions: DashMap<String, Event>,
+    contract_to_event_index: HashMap<String, String>
 }
 
 impl MarketPoller {
@@ -35,6 +36,7 @@ impl MarketPoller {
             request_tx,
             resub_rx,
             subscriptions: DashMap::new(),
+            contract_to_event_index: HashMap::new()
         }
     }
 
@@ -55,6 +57,9 @@ impl MarketPoller {
                     self.subscriptions.remove(&event.ticker);
 
                     for contract in event.contracts {
+
+                        self.contract_to_event_index.remove(&contract.instrument_symbol);
+                        
                         self.request_tx
                             .send(
                                 Subscriptions::Unsubscribe(Stream::DifferentialDepth(
@@ -76,6 +81,10 @@ impl MarketPoller {
                             .into(),
                         )
                         .await?;
+                    
+                    // as a first pass we'll just clone, this should be optimized later
+                    self.contract_to_event_index.insert(contract.instrument_symbol.clone(), event.ticker.clone());
+                    
                 }
 
                 self.subscriptions
