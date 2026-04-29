@@ -99,6 +99,7 @@ pub struct Contract {
     pub terms_url: String,
     pub ticker: String,
     #[serde(rename = "instrumentSymbol")]
+    #[serde(deserialize_with = "lowercase")]
     pub instrument_symbol: String,
     #[serde(rename = "effectiveDate")]
     pub effective_date: Option<DateTime<Utc>>,
@@ -129,6 +130,29 @@ pub struct Strike {
     pub strike_type: String,
     #[serde(rename = "availableAt")]
     pub available_at: Option<DateTime<Utc>>,
+}
+
+pub struct Market {
+    parent: String,
+    contracts: Vec<Contract>,
+}
+
+impl From<Event> for Market {
+    fn from(value: Event) -> Self {
+        Self {
+            parent: value.ticker,
+            contracts: value.contracts,
+        }
+    }
+}
+
+fn lowercase<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    // we need to optimize this
+    let s = String::deserialize(deserializer)?;
+    Ok(s.to_lowercase())
 }
 
 // polymarket

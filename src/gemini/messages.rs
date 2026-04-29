@@ -1,83 +1,100 @@
-use serde::{
-    Deserialize, Serialize, Serializer,
-    ser::{SerializeSeq, SerializeStruct},
-};
+use serde::{Deserialize, Serialize, Serializer};
 
 use crate::session::Request;
 
+// ====
+// Send
+// ====
+
 #[derive(Debug)]
-pub enum Subscriptions {
-    Subscribe(String),
-    Unsubscribe(String),
-    Resubscribe(String),
+pub enum Stream {
+    BookTicker(String),
+    PartialDepth(String),
+    DifferentialDepth(String),
+    Trade(String),
+    Order,
+    Balance,
 }
 
-impl Into<Request<Subscriptions>> for Subscriptions {
-    fn into(self) -> Request<Subscriptions> {
-        match self {
-            Self::Resubscribe(_) => Request::LowPriority {
+#[derive(Debug)]
+pub enum Subscriptions {
+    Subscribe(Stream),
+    Unsubscribe(Stream),
+    Resubscribe(Stream),
+}
+
+impl From<Subscriptions> for Request<Subscriptions> {
+    fn from(value: Subscriptions) -> Self {
+        match value {
+            Subscriptions::Resubscribe(_) => Request::LowPriority {
                 batch: true,
-                inner: self,
+                inner: value,
             },
 
             _ => Request::LowPriority {
                 batch: false,
-                inner: self,
+                inner: value,
             },
         }
     }
 }
-
-use serde_json::json;
 
 impl Serialize for Subscriptions {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        fn channel_for(stream: &str) -> String {
-            let mut s = String::with_capacity(stream.len() + 12);
-            s.push_str(stream);
-            s.push_str("@depth@100ms");
-            s
+        #[derive(Serialize)]
+        struct SubscriptionMessage<'a> {
+            id: &'a str,
+            method: &'a str,
+            params: [String; 1],
         }
 
-        fn serialize_single<S: Serializer>(
-            serializer: S,
-            stream: &str,
-            method: &str,
-        ) -> Result<S::Ok, S::Error> {
-            let mut state = serializer.serialize_struct("Subscriptions", 3)?;
-            let channel = channel_for(stream);
-
-            state.serialize_field("id", stream)?;
-            state.serialize_field("method", method)?;
-            state.serialize_field("params", &[channel])?;
-            state.end()
+        fn build_message<'a>(stream: &'a Stream, method: &'a str) -> SubscriptionMessage<'a> {
+            match stream {
+                Stream::BookTicker(symbol) => SubscriptionMessage {
+                    id: symbol,
+                    method,
+                    params: [format!("{}@bookTicker", symbol)],
+                },
+                Stream::PartialDepth(symbol) => SubscriptionMessage {
+                    id: symbol,
+                    method,
+                    params: [format!("{}@depth@5@100ms", symbol)],
+                },
+                Stream::DifferentialDepth(symbol) => SubscriptionMessage {
+                    id: symbol,
+                    method,
+                    params: [format!("{}@depth@100ms", symbol)],
+                },
+                Stream::Trade(symbol) => SubscriptionMessage {
+                    id: symbol,
+                    method,
+                    params: ["trade".to_string()],
+                },
+                Stream::Order => SubscriptionMessage {
+                    id: "order",
+                    method,
+                    params: ["orders@account".to_string()],
+                },
+                Stream::Balance => SubscriptionMessage {
+                    id: "balance",
+                    method,
+                    params: ["balances@account".to_string()],
+                },
+            }
         }
 
         match self {
-            Self::Subscribe(stream) => serialize_single(serializer, stream, "subscribe"),
-            Self::Unsubscribe(stream) => serialize_single(serializer, stream, "unsubscribe"),
-
+            Self::Subscribe(stream) => build_message(stream, "subscribe").serialize(serializer),
+            Self::Unsubscribe(stream) => build_message(stream, "unsubscribe").serialize(serializer),
             Self::Resubscribe(stream) => {
-                let channel = channel_for(stream);
-
-                let mut seq = serializer.serialize_seq(Some(2))?;
-
-                seq.serialize_element(&json!({
-                    "id": stream,
-                    "method": "unsubscribe",
-                    "params": [channel.clone()]
-                }))?;
-
-                seq.serialize_element(&json!({
-                    "id": stream,
-                    "method": "subscribe",
-                    "params": [channel]
-                }))?;
-
-                seq.end()
+                let messages = [
+                    build_message(stream, "unsubscribe"),
+                    build_message(stream, "subscribe"),
+                ];
+                messages.serialize(serializer)
             }
         }
     }
@@ -86,21 +103,22 @@ impl Serialize for Subscriptions {
 #[derive(Debug, Clone)]
 pub enum Message {
     OrderbookUpdate(OrderbookUpdate),
-    SubscriptionStatus(SubscriptionStatus),
+    SubscriptionError(SubscriptionError),
+    BalanceUpdate(BalanceUpdate),
     Unknown,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct SubscriptionError {
-    pub code: i16,
-    pub msg: String,
+    pub id: u32,
+    pub status: i16,
+    pub error: SubscriptionErrorMsg,
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct SubscriptionStatus {
-    pub id: u32,
-    pub status: i16,
-    pub error: Option<SubscriptionError>,
+pub struct SubscriptionErrorMsg {
+    code: i16,
+    msg: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -156,4 +174,26 @@ where
     let value = (digits[0] - b'0') * 10 + (digits[1] - b'0');
 
     Ok(value)
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct BalanceUpdate {
+    // #[serde(rename = "e")]
+    // pub event_type: String,
+
+    // #[serde(rename = "E")]
+    // pub event_time_ns: u64,
+    #[serde(rename = "u")]
+    pub update_ts: u64,
+
+    #[serde(rename = "B")]
+    pub balance_update: Vec<AssetBalance>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct AssetBalance {
+    #[serde(rename = "a")]
+    pub asset: String,
+    #[serde(rename = "f")]
+    pub balance: String,
 }

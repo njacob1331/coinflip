@@ -13,6 +13,13 @@ use tokio::{
     },
     task::JoinHandle,
 };
+use tokio_util::sync::CancellationToken;
+
+#[derive(Debug)]
+pub enum Payload<T> {
+    Single(T),
+    Batch(Vec<T>),
+}
 
 #[derive(Debug)]
 pub enum Request<T> {
@@ -95,17 +102,24 @@ where
         Ok(())
     }
 
-    fn teardown(&mut self) {
+    fn exit(&mut self) {
         self.writer_handle.abort();
         self.reader_handle.abort();
     }
 
-    async fn run(&mut self, request_rx: &mut Receiver<Request<T>>)
+    async fn run(&mut self, request_rx: &mut Receiver<Request<T>>, cancel: CancellationToken)
     where
         T: Serialize,
     {
         loop {
             tokio::select! {
+                biased;
+
+                _ = cancel.cancelled() => {
+                    println!("session cancelling");
+                    break
+                },
+
                 res = &mut self.writer_handle => {
                     match res {
                         Ok(res) => println!("ws session ended with result: {res:?}"),
@@ -113,6 +127,7 @@ where
                     }
                     break
                 }
+
                 res = &mut self.reader_handle => {
                     match res {
                         Ok(res) => println!("ws session ended with result: {res:?}"),
@@ -120,21 +135,24 @@ where
                     }
                     break
                 }
+
                 request = request_rx.recv() => {
                     match request {
-                        Some(req) => self.pq.push(req),
+                        Some(req) => {
+                            self.pq.push(req);
+                            if let Err(e) = self.forward_from_queue().await {
+                                println!("failed to forward ws message, channel closed: {e}");
+                                break;
+                            }
+                        },
                         None => break
                     }
                 }
             }
-
-            if let Err(e) = self.forward_from_queue().await {
-                println!("failed to forward ws message, channel closed: {e}");
-                break;
-            }
         }
 
-        self.teardown();
+        println!("session exiting");
+        self.exit();
     }
 }
 
@@ -144,8 +162,8 @@ pub struct SessionManager {
 
 impl SessionManager {
     pub fn new() -> Self {
-        Self { 
-            connection_reset: Arc::new(Notify::new())
+        Self {
+            connection_reset: Arc::new(Notify::new()),
         }
     }
 
@@ -158,7 +176,8 @@ impl SessionManager {
         url: &str,
         parser: P,
         router: R,
-        mut request_tx: Receiver<Request<T>>,
+        mut request_rx: Receiver<Request<T>>,
+        cancel: CancellationToken,
     ) where
         P: Parser<M> + Send + 'static,
         R: Router<M> + Send + 'static,
@@ -172,8 +191,12 @@ impl SessionManager {
         loop {
             tracing::info!("starting ws connection @ {url}");
             match Session::new(url, parser.clone(), router.clone()).await {
-                Ok(mut session) => session.run(&mut request_tx).await,
+                Ok(mut session) => session.run(&mut request_rx, cancel.clone()).await,
                 Err(e) => println!("failed to start ws session: {e}"),
+            }
+
+            if cancel.is_cancelled() {
+                break;
             }
 
             // notify that the connection died
@@ -186,5 +209,7 @@ impl SessionManager {
 
             tokio::time::sleep(retry_interval).await;
         }
+
+        println!("session manager exiting")
     }
 }

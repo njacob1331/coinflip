@@ -2,93 +2,113 @@ use std::{sync::Arc, time::Duration};
 
 use anyhow::Result;
 use dashmap::{DashMap, DashSet};
-use tokio::sync::{Notify, mpsc::Sender};
+use tokio::sync::{
+    Notify,
+    mpsc::{Receiver, Sender},
+};
+use tokio_util::sync::CancellationToken;
 
 use crate::{
-    gemini::{client::GeminiClient, messages::Subscriptions, responses::Contract},
+    gemini::{
+        client::GeminiClient,
+        messages::{Stream, Subscriptions},
+        responses::{Contract, Event, Market},
+    },
     session::Request,
 };
 
 pub struct MarketPoller {
     api_client: Arc<GeminiClient>,
     request_tx: Sender<Request<Subscriptions>>,
-    resub_notification: Arc<Notify>,
-    resub_list: Arc<DashSet<String>>,
-    subscriptions: DashMap<String, Contract>,
+    resub_rx: Receiver<String>,
+    subscriptions: DashMap<String, Event>,
 }
 
 impl MarketPoller {
     pub fn new(
         api_client: Arc<GeminiClient>,
         request_tx: Sender<Request<Subscriptions>>,
-        resub_notification: Arc<Notify>,
-        resub_list: Arc<DashSet<String>>,
+        resub_rx: Receiver<String>,
     ) -> Self {
         Self {
             api_client,
             request_tx,
-            resub_notification,
-            resub_list,
+            resub_rx,
             subscriptions: DashMap::new(),
         }
     }
 
-    pub async fn poll(&mut self) -> Result<()> {
+    pub async fn poll(&self) -> Result<()> {
         println!("Performing scheduled api poll for Gemini");
-        let poll_markets: Vec<Contract> = self
-            .api_client
-            .list_prediction_market_events()
-            .await?
-            .into_iter()
-            .flat_map(|e| e.contracts)
-            .map(|mut c| {
-                c.instrument_symbol = c.instrument_symbol.to_lowercase();
-                c
-            })
-            .collect();
+        let events = self.api_client.list_prediction_market_events().await?;
 
-        for poll_market in poll_markets {
+        // need logic to remove symbols in subscriptions which no longer appear in api response
+
+        for mut event in events {
             // check if we have this market in our sub map
-            if self
-                .subscriptions
-                .contains_key(&poll_market.instrument_symbol)
-            {
+            if self.subscriptions.contains_key(&event.ticker) {
                 // if we have it and its active, no action
-                if poll_market.status == "active" {
+                if event.status == "active" {
                     continue;
                 } else {
                     // if we have it and its not active, unsub
-                    self.subscriptions.remove(&poll_market.instrument_symbol);
-                    let _ = self
-                        .request_tx
-                        .send(Subscriptions::Unsubscribe(poll_market.instrument_symbol).into())
-                        .await;
+                    self.subscriptions.remove(&event.ticker);
+
+                    for contract in event.contracts {
+                        self.request_tx
+                            .send(
+                                Subscriptions::Unsubscribe(Stream::DifferentialDepth(
+                                    contract.instrument_symbol,
+                                ))
+                                .into(),
+                            )
+                            .await?;
+                    }
                 }
-            } else if poll_market.status == "active" {
+            } else if event.status == "active" {
                 // subscribe
-                let _ = self
-                    .request_tx
-                    .send(Subscriptions::Resubscribe(poll_market.instrument_symbol.clone()).into())
-                    .await;
+                for contract in &event.contracts {
+                    self.request_tx
+                        .send(
+                            Subscriptions::Subscribe(Stream::DifferentialDepth(
+                                contract.instrument_symbol.clone(),
+                            ))
+                            .into(),
+                        )
+                        .await?;
+                }
+
                 self.subscriptions
-                    .insert(poll_market.instrument_symbol.clone(), poll_market);
+                    .insert(std::mem::take(&mut event.ticker), event);
             }
         }
+
+        tracing::info!("subscribed to {} markets", self.subscriptions.len());
 
         Ok(())
     }
 
-    pub async fn run(&mut self) {
+    pub async fn run(&mut self, cancel: CancellationToken) {
         let mut interval = tokio::time::interval(Duration::from_secs(60));
+
         loop {
             tokio::select! {
                 biased;
 
-                _ = self.resub_notification.notified() => {
-                    let keys: Vec<_> = self.resub_list.iter().map(|e| e.key().clone()).collect();
-                    for key in keys {
-                        let _ = self.request_tx.send(Subscriptions::Resubscribe(key).into()).await;
+                _ = cancel.cancelled() => break,
+
+                resub = self.resub_rx.recv() => {
+                    match resub {
+                        Some(symbol) => {
+                            tracing::info!("resubbbing to {symbol}");
+                            if self.request_tx.send(Subscriptions::Resubscribe(Stream::DifferentialDepth(symbol)).into()).await.is_err() {
+                                break
+                            }
+                        }
+
+                        None => break
                     }
+
                 },
                 _ = interval.tick() => {
                     if let Err(e) = self.poll().await {
@@ -97,5 +117,7 @@ impl MarketPoller {
                 }
             }
         }
+
+        println!("market poller exiting")
     }
 }

@@ -1,5 +1,5 @@
 use crate::{
-    gemini::messages::{Message, OrderbookUpdate, SubscriptionStatus},
+    gemini::messages::{BalanceUpdate, Message, OrderbookUpdate, SubscriptionError},
     traits::Parser,
 };
 
@@ -18,12 +18,17 @@ impl Parser<Message> for GeminiParser {
             return Ok(Message::OrderbookUpdate(parsed));
         }
 
-        // if first_update_id == last_update_id its a snapshot
+        if memchr::memmem::find(bytes, b"\"balanceUpdate\"").is_some() {
+            let parsed: BalanceUpdate = sonic_rs::from_slice(bytes)?;
+            return Ok(Message::BalanceUpdate(parsed));
+        }
 
-        // if memchr::memmem::find(bytes, b"\"status\"").is_some() {
-        //     let parsed: SubscriptionStatus = sonic_rs::from_slice(bytes)?;
-        //     return Ok(Message::SubscriptionStatus(parsed));
-        // }
+        if memchr::memmem::find(bytes, b"\"error\"").is_some()
+            && memchr::memmem::find(bytes, b"\"code\"").is_some()
+        {
+            let parsed: SubscriptionError = sonic_rs::from_slice(bytes)?;
+            return Ok(Message::SubscriptionError(parsed));
+        }
 
         Ok(Message::Unknown)
     }
