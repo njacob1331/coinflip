@@ -24,7 +24,7 @@ impl BookKeeper {
         }
     }
 
-    fn orderbooks(&self) -> Arc<DashMap<String, Orderbook>> {
+    pub fn orderbooks(&self) -> Arc<DashMap<String, Orderbook>> {
         self.orderbooks.clone()
     }
 
@@ -62,7 +62,12 @@ impl BookKeeper {
         }
 
         if is_invalid {
-            tracing::info!("invalid sequence detected for {}", &update.symbol);
+            tracing::info!(
+                "invalid sequence detected for {}\n {:#?}",
+                &update.symbol,
+                &update
+            );
+
             self.orderbooks.remove(&update.symbol);
             self.corrupted.insert(update.symbol.clone());
             let _ = self.resub_tx.try_send(update.symbol);

@@ -110,7 +110,7 @@ pub enum Message {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct SubscriptionError {
-    pub id: u32,
+    pub id: String,
     pub status: i16,
     pub error: SubscriptionErrorMsg,
 }

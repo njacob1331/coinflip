@@ -41,10 +41,10 @@ impl GeminiRouter {
 #[async_trait]
 impl Router<Message> for GeminiRouter {
     async fn route(&self, msg: Message) -> anyhow::Result<()> {
-        tracing::info!("routing msg: {msg:#?}");
         match msg {
             Message::OrderbookUpdate(update) => self.orderbook_tx.send(update).await?,
             Message::BalanceUpdate(update) => self.balance_tx.send(update).await?,
+            Message::SubscriptionError(error) => tracing::info!("{error:#?}"),
             _ => {}
         }
 

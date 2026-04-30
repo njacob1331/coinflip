@@ -50,7 +50,8 @@ async fn main() -> Result<()> {
     let client = Arc::new(GeminiClient::new());
     let mut session_manager = SessionManager::new();
     let connection_listener = session_manager.connection_listener();
-    let mut poller = MarketPoller::new(client.clone(), request_tx, resub_rx);
+    let mut poller =
+        MarketPoller::new(client.clone(), request_tx, resub_rx, bookeeper.orderbooks());
 
     let balance_task = tokio::spawn(async move {
         while let Some(balance) = balance_rx.recv().await {

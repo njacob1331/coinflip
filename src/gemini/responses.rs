@@ -37,38 +37,37 @@ pub struct Event {
 
     #[serde(default)]
     pub contracts: Vec<Contract>,
-
-    #[serde(rename = "contractOrderbooks")]
-    pub contract_orderbooks: Option<Value>,
-    pub volume: Option<String>,
-    #[serde(rename = "volume24h")]
-    pub volume_24h: Option<String>,
-    pub liquidity: Option<String>,
-    pub tags: Option<Value>,
-    #[serde(rename = "effectiveDate")]
-    pub effective_date: Option<DateTime<Utc>>,
-    #[serde(rename = "expiryDate")]
-    pub expiry_date: Option<DateTime<Utc>>,
-    #[serde(rename = "startTime")]
-    pub start_time: Option<Value>,
-    #[serde(rename = "termsLink")]
-    pub terms_link: Option<String>,
-    pub subcategory: Option<Value>,
-    #[serde(rename = "socialImageUrl")]
-    pub social_image_url: Option<String>,
-    #[serde(rename = "featuredImageUrl")]
-    pub featured_image_url: Option<Value>,
-    #[serde(rename = "isLive")]
-    pub is_live: Option<bool>,
-    pub events: Option<Value>,
-    pub template: Option<String>,
-    #[serde(rename = "gameId")]
-    pub game_id: Option<Value>,
-    #[serde(rename = "eventTags")]
-    pub event_tags: Option<Value>,
-    pub source: Option<String>,
-    pub settlement: Option<Value>,
-    pub participants: Option<Value>,
+    // #[serde(rename = "contractOrderbooks")]
+    // pub contract_orderbooks: Option<Value>,
+    // pub volume: Option<String>,
+    // #[serde(rename = "volume24h")]
+    // pub volume_24h: Option<String>,
+    // pub liquidity: Option<String>,
+    // pub tags: Option<Value>,
+    // #[serde(rename = "effectiveDate")]
+    // pub effective_date: Option<DateTime<Utc>>,
+    // #[serde(rename = "expiryDate")]
+    // pub expiry_date: Option<DateTime<Utc>>,
+    // #[serde(rename = "startTime")]
+    // pub start_time: Option<Value>,
+    // #[serde(rename = "termsLink")]
+    // pub terms_link: Option<String>,
+    // pub subcategory: Option<Value>,
+    // #[serde(rename = "socialImageUrl")]
+    // pub social_image_url: Option<String>,
+    // #[serde(rename = "featuredImageUrl")]
+    // pub featured_image_url: Option<Value>,
+    // #[serde(rename = "isLive")]
+    // pub is_live: Option<bool>,
+    // pub events: Option<Value>,
+    // pub template: Option<String>,
+    // #[serde(rename = "gameId")]
+    // pub game_id: Option<Value>,
+    // #[serde(rename = "eventTags")]
+    // pub event_tags: Option<Value>,
+    // pub source: Option<String>,
+    // pub settlement: Option<Value>,
+    // pub participants: Option<Value>,
 }
 
 #[derive(Debug, Deserialize)]
