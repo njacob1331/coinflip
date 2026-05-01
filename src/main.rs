@@ -8,7 +8,7 @@ use crate::{
         client::GeminiClient, messages::Subscriptions, parser::GeminiParser, poll::MarketPoller,
         router::GeminiRouter,
     },
-    session::{Request, SessionManager},
+    session::{Payload, Request, SessionManager},
 };
 
 mod bookkeeper;
@@ -37,7 +37,7 @@ async fn main() -> Result<()> {
 
     // the type on Request should be something like enum GeminiSend
     // which carries every possible type that can be sent via gemini ws
-    let (request_tx, request_rx) = tokio::sync::mpsc::channel::<Request<Subscriptions>>(32);
+    let (request_tx, request_rx) = tokio::sync::mpsc::channel::<Payload<Subscriptions>>(32);
     let order_tx = request_tx.clone();
     let (resub_tx, resub_rx) = tokio::sync::mpsc::channel::<String>(32);
 

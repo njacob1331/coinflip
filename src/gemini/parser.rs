@@ -5,20 +5,25 @@ use crate::{
 
 use memchr::memmem::Finder;
 
-pub struct GeminiParser;
+pub struct GeminiParser<'f> {
+    depth_finder: Finder<'f>,
+    balance_finder: Finder<'f>,
+    error_finder: Finder<'f>,
+    code_finder: Finder<'f>,
+}
 
-impl GeminiParser {
-    static DEPTH: Finder = Finder::new("\"depthUpdate\"");
-    static BAL:   Finder = Finder::new("\"balanceUpdate\"");
-    static ERR:   Finder = Finder::new("\"error\"");
-    static CODE:  Finder = Finder::new("\"code\"");
-    
+impl<'f> GeminiParser<'f> {
     pub fn new() -> Self {
-        Self
+        Self {
+            depth_finder: Finder::new("\"depthUpdate\""),
+            balance_finder: Finder::new("\"balanceUpdate\""),
+            error_finder: Finder::new("\"error\""),
+            code_finder: Finder::new("\"code\""),
+        }
     }
 }
 
-impl Parser<Message> for GeminiParser {
+impl<'f> Parser<Message> for GeminiParser<'f> {
     fn parse(&self, bytes: &[u8]) -> anyhow::Result<Message> {
         // if memchr::memmem::find(bytes, b"\"depthUpdate\"").is_some() {
         //     let parsed: OrderbookUpdate = sonic_rs::from_slice(bytes)?;
@@ -39,13 +44,13 @@ impl Parser<Message> for GeminiParser {
 
         // Ok(Message::Unknown)
 
-        if DEPTH.find(bytes).is_some() {
+        if self.depth_finder.find(bytes).is_some() {
             return Ok(Message::OrderbookUpdate(sonic_rs::from_slice(bytes)?));
         }
-        if BAL.find(bytes).is_some() {
+        if self.balance_finder.find(bytes).is_some() {
             return Ok(Message::BalanceUpdate(sonic_rs::from_slice(bytes)?));
         }
-        if ERR.find(bytes).is_some() && CODE.find(bytes).is_some() {
+        if self.error_finder.find(bytes).is_some() && self.code_finder.find(bytes).is_some() {
             return Ok(Message::SubscriptionError(sonic_rs::from_slice(bytes)?));
         }
 

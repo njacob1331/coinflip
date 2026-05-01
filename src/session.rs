@@ -1,5 +1,5 @@
 use crate::{
-    traits::{Parser, Router},
+    traits::{HasPriority, Parser, Router},
     ws::Ws,
 };
 use anyhow::Result;
@@ -21,31 +21,43 @@ pub enum Payload<T> {
     Batch(Vec<T>),
 }
 
-#[derive(Debug)]
-pub enum Request<T> {
-    LowPriority { batch: bool, inner: T },
-    HighPriority { batch: bool, inner: T },
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Priority {
+    Low,
+    Normal,
+    High,
+    Critial,
 }
 
-impl<T> Request<T> {
-    pub fn split(self) -> (bool, T) {
-        match self {
-            Request::HighPriority { batch, inner } => (batch, inner),
-            Request::LowPriority { batch, inner } => (batch, inner),
-        }
+#[derive(Debug)]
+pub struct Request<T> {
+    pub priority: Priority,
+    pub payload: Payload<T>,
+}
+
+impl<T> From<Payload<T>> for Request<T>
+where
+    T: HasPriority,
+{
+    fn from(payload: Payload<T>) -> Self {
+        let priority = match &payload {
+            Payload::Single(item) => item.priority(),
+
+            // Batch rule: highest priority wins
+            Payload::Batch(items) => items
+                .iter()
+                .map(|i| i.priority())
+                .max()
+                .unwrap_or(Priority::Low),
+        };
+
+        Request { priority, payload }
     }
 }
 
 impl<T> Ord for Request<T> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        use Request::*;
-        use std::cmp::Ordering::*;
-
-        match (self, other) {
-            (HighPriority { .. }, LowPriority { .. }) => Greater,
-            (LowPriority { .. }, HighPriority { .. }) => Less,
-            _ => Equal,
-        }
+        self.priority.cmp(&other.priority)
     }
 }
 
@@ -57,11 +69,7 @@ impl<T> PartialOrd for Request<T> {
 
 impl<T> PartialEq for Request<T> {
     fn eq(&self, other: &Self) -> bool {
-        matches!(
-            (self, other),
-            (Request::HighPriority { .. }, Request::HighPriority { .. })
-                | (Request::LowPriority { .. }, Request::LowPriority { .. })
-        )
+        self.priority == other.priority
     }
 }
 
@@ -76,7 +84,7 @@ struct Session<T> {
 
 impl<T> Session<T>
 where
-    T: Serialize + Send + 'static,
+    T: HasPriority + Serialize + Send + 'static,
 {
     async fn new<P, M, R>(url: &str, parser: Arc<P>, router: Arc<R>) -> Result<Self>
     where
@@ -107,10 +115,7 @@ where
         self.reader_handle.abort();
     }
 
-    async fn run(&mut self, request_rx: &mut Receiver<Request<T>>, cancel: CancellationToken)
-    where
-        T: Serialize,
-    {
+    async fn run(&mut self, request_rx: &mut Receiver<Payload<T>>, cancel: CancellationToken) {
         loop {
             tokio::select! {
                 biased;
@@ -139,7 +144,7 @@ where
                 request = request_rx.recv() => {
                     match request {
                         Some(req) => {
-                            self.pq.push(req);
+                            self.pq.push(req.into());
                             if let Err(e) = self.forward_from_queue().await {
                                 println!("failed to forward ws message, channel closed: {e}");
                                 break;
@@ -176,13 +181,13 @@ impl SessionManager {
         url: &str,
         parser: P,
         router: R,
-        mut request_rx: Receiver<Request<T>>,
+        mut request_rx: Receiver<Payload<T>>,
         cancel: CancellationToken,
     ) where
         P: Parser<M> + Send + 'static,
         R: Router<M> + Send + 'static,
         M: Send + 'static,
-        T: Serialize + Send + 'static,
+        T: HasPriority + Serialize + Send + 'static,
     {
         let parser = Arc::new(parser);
         let router = Arc::new(router);

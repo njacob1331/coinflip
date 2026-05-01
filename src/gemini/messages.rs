@@ -1,12 +1,11 @@
 use serde::{Deserialize, Serialize, Serializer};
 
-use crate::session::Request;
+use crate::{
+    session::{Payload, Priority, Request},
+    traits::HasPriority,
+};
 
-// ====
-// Send
-// ====
-
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Stream {
     BookTicker(String),
     PartialDepth(String),
@@ -23,18 +22,24 @@ pub enum Subscriptions {
     Resubscribe(Stream),
 }
 
-impl From<Subscriptions> for Request<Subscriptions> {
+impl HasPriority for Subscriptions {
+    fn priority(&self) -> Priority {
+        match self {
+            Subscriptions::Resubscribe(_) => Priority::High,
+            _ => Priority::Low,
+        }
+    }
+}
+
+impl From<Subscriptions> for Payload<Subscriptions> {
     fn from(value: Subscriptions) -> Self {
         match value {
-            Subscriptions::Resubscribe(_) => Request::LowPriority {
-                batch: true,
-                inner: value,
-            },
-
-            _ => Request::LowPriority {
-                batch: false,
-                inner: value,
-            },
+            Subscriptions::Subscribe(_) => Payload::Single(value),
+            Subscriptions::Unsubscribe(_) => Payload::Single(value),
+            Subscriptions::Resubscribe(stream) => Payload::Batch(vec![
+                Subscriptions::Unsubscribe(stream.clone()),
+                Subscriptions::Subscribe(stream),
+            ]),
         }
     }
 }

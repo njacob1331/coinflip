@@ -12,7 +12,7 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 use url::Url;
 
 use crate::{
-    session::Request,
+    session::{Payload, Request},
     traits::{Parser, Router},
 };
 
@@ -76,27 +76,17 @@ impl Ws {
     ) -> JoinHandle<Result<()>> {
         tokio::spawn(async move {
             while let Ok(request) = rx.recv().await {
-                // ideal pattern
-                // match request.inner() {
-                //     Payload::Single(p) => {
-                //         let json = sonic_rs::to_string(&p)?;
-                //         writer.send(WsMessage::Text(json)).await?
-                //     }
-                //     Payload::Batch(p) => {
-                //         for json in p {
-                //            send each
-                //         }
-                //     }
-                // }
-                let (is_batch, inner) = request.split();
-                let json = sonic_rs::to_string(&inner)?;
-
-                if is_batch {
-                    for j in split_json_array(&json) {
-                        writer.send(WsMessage::Text(j.to_owned())).await?
+                match request.payload {
+                    Payload::Single(payload) => {
+                        let json = sonic_rs::to_string(&payload)?;
+                        writer.send(WsMessage::Text(json)).await?
                     }
-                } else {
-                    writer.send(WsMessage::Text(json)).await?
+                    Payload::Batch(payload) => {
+                        for element in payload {
+                            let json = sonic_rs::to_string(&element)?;
+                            writer.send(WsMessage::Text(json)).await?
+                        }
+                    }
                 }
             }
 

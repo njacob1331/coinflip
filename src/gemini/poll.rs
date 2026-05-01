@@ -15,12 +15,12 @@ use crate::{
         orderbook::Orderbook,
         responses::{Contract, Event, Market},
     },
-    session::Request,
+    session::{Payload, Request},
 };
 
 pub struct MarketPoller {
     api_client: Arc<GeminiClient>,
-    request_tx: Sender<Request<Subscriptions>>,
+    request_tx: Sender<Payload<Subscriptions>>,
     resub_rx: Receiver<String>,
     subscriptions: DashMap<String, Event>,
     contract_to_event_index: HashMap<String, String>,
@@ -30,7 +30,7 @@ pub struct MarketPoller {
 impl MarketPoller {
     pub fn new(
         api_client: Arc<GeminiClient>,
-        request_tx: Sender<Request<Subscriptions>>,
+        request_tx: Sender<Payload<Subscriptions>>,
         resub_rx: Receiver<String>,
         orderbooks: Arc<DashMap<String, Orderbook>>,
     ) -> Self {
@@ -73,14 +73,10 @@ impl MarketPoller {
                         tracing::info!("removing dead book: {}", &contract.instrument_symbol);
                         self.orderbooks.remove(&contract.instrument_symbol);
 
-                        self.request_tx
-                            .send(
-                                Subscriptions::Unsubscribe(Stream::DifferentialDepth(
-                                    contract.instrument_symbol,
-                                ))
-                                .into(),
-                            )
-                            .await?;
+                        let payload = Subscriptions::Unsubscribe(Stream::DifferentialDepth(
+                            contract.instrument_symbol,
+                        ));
+                        self.request_tx.send(payload.into()).await?;
                     }
                 }
             } else if event.status == "active" {
@@ -91,14 +87,10 @@ impl MarketPoller {
                         .as_ref()
                         .is_some_and(|state| state == "open")
                     {
-                        self.request_tx
-                            .send(
-                                Subscriptions::Subscribe(Stream::DifferentialDepth(
-                                    contract.instrument_symbol.clone(),
-                                ))
-                                .into(),
-                            )
-                            .await?;
+                        let payload = Subscriptions::Subscribe(Stream::DifferentialDepth(
+                            contract.instrument_symbol.clone(),
+                        ));
+                        self.request_tx.send(payload.into()).await?;
 
                         // as a first pass we'll just clone, this should be optimized later
                         self.contract_to_event_index
@@ -129,7 +121,10 @@ impl MarketPoller {
                     match resub {
                         Some(symbol) => {
                             tracing::info!("resubbbing to {symbol}");
-                            if self.request_tx.send(Subscriptions::Resubscribe(Stream::DifferentialDepth(symbol)).into()).await.is_err() {
+                            let payload = Subscriptions::Resubscribe(
+                                Stream::DifferentialDepth(symbol),
+                            );
+                            if self.request_tx.send(payload.into()).await.is_err() {
                                 break
                             }
                         }

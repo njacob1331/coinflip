@@ -1,6 +1,8 @@
 use anyhow::Result;
 use async_trait::async_trait;
 
+use crate::session::Priority;
+
 pub trait Parser<T>: Send + Sync
 where
     T: Send + 'static,
@@ -14,4 +16,8 @@ where
     T: Send + 'static,
 {
     async fn route(&self, msg: T) -> Result<()>;
+}
+
+pub trait HasPriority {
+    fn priority(&self) -> Priority;
 }
