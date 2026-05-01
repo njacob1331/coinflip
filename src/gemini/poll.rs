@@ -121,9 +121,10 @@ impl MarketPoller {
                     match resub {
                         Some(symbol) => {
                             tracing::info!("resubbbing to {symbol}");
-                            let payload = Subscriptions::Resubscribe(
-                                Stream::DifferentialDepth(symbol),
-                            );
+                            let payload = vec![
+                                Subscriptions::Unsubscribe(Stream::DifferentialDepth(symbol.clone())),
+                                Subscriptions::Subscribe(Stream::DifferentialDepth(symbol))
+                            ];
                             if self.request_tx.send(payload.into()).await.is_err() {
                                 break
                             }

@@ -5,7 +5,7 @@ use crate::{
     traits::HasPriority,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum Stream {
     BookTicker(String),
     PartialDepth(String),
@@ -19,28 +19,23 @@ pub enum Stream {
 pub enum Subscriptions {
     Subscribe(Stream),
     Unsubscribe(Stream),
-    Resubscribe(Stream),
 }
 
 impl HasPriority for Subscriptions {
     fn priority(&self) -> Priority {
-        match self {
-            Subscriptions::Resubscribe(_) => Priority::High,
-            _ => Priority::Low,
-        }
+        Priority::Low
+    }
+}
+
+impl From<Vec<Subscriptions>> for Payload<Subscriptions> {
+    fn from(value: Vec<Subscriptions>) -> Self {
+        Payload::Batch(value)
     }
 }
 
 impl From<Subscriptions> for Payload<Subscriptions> {
     fn from(value: Subscriptions) -> Self {
-        match value {
-            Subscriptions::Subscribe(_) => Payload::Single(value),
-            Subscriptions::Unsubscribe(_) => Payload::Single(value),
-            Subscriptions::Resubscribe(stream) => Payload::Batch(vec![
-                Subscriptions::Unsubscribe(stream.clone()),
-                Subscriptions::Subscribe(stream),
-            ]),
-        }
+        Payload::Single(value)
     }
 }
 
@@ -94,13 +89,6 @@ impl Serialize for Subscriptions {
         match self {
             Self::Subscribe(stream) => build_message(stream, "subscribe").serialize(serializer),
             Self::Unsubscribe(stream) => build_message(stream, "unsubscribe").serialize(serializer),
-            Self::Resubscribe(stream) => {
-                let messages = [
-                    build_message(stream, "unsubscribe"),
-                    build_message(stream, "subscribe"),
-                ];
-                messages.serialize(serializer)
-            }
         }
     }
 }
