@@ -16,46 +16,6 @@ use crate::{
     traits::{Parser, Router},
 };
 
-pub fn split_json_array(raw: &str) -> Vec<&str> {
-    let bytes = raw.as_bytes();
-    let mut depth = 0;
-    let mut start = 0;
-    let mut out = Vec::new();
-    let mut in_string = false;
-    let mut escape = false;
-
-    for (i, &b) in bytes.iter().enumerate() {
-        if escape {
-            escape = false;
-            continue;
-        }
-
-        match b {
-            b'\\' => {
-                escape = true;
-            }
-            b'"' => {
-                in_string = !in_string;
-            }
-            b'{' if !in_string => {
-                if depth == 0 {
-                    start = i;
-                }
-                depth += 1;
-            }
-            b'}' if !in_string => {
-                depth -= 1;
-                if depth == 0 {
-                    out.push(&raw[start..=i]);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    out
-}
-
 pub type Writer = SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, WsMessage>;
 pub type Reader = SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>;
 pub type WsMessage = tokio_tungstenite::tungstenite::Message;
