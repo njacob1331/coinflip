@@ -44,18 +44,66 @@ impl MarketPoller {
         }
     }
 
+    async fn subscribe(&mut self, mut event: Event) -> Result<()> {
+        for contract in &event.contracts {
+            if contract
+                .market_state
+                .as_ref()
+                .is_some_and(|state| state == "open")
+            {
+                let payload = Subscriptions::Subscribe(Stream::DifferentialDepth(
+                    contract.instrument_symbol.clone(),
+                ));
+                self.request_tx.send(payload.into()).await?;
+
+                // as a first pass we'll just clone, this should be optimized later
+                self.contract_to_event_index
+                    .insert(contract.instrument_symbol.clone(), event.ticker.clone());
+            }
+        }
+
+        self.subscriptions
+            .insert(std::mem::take(&mut event.ticker), event);
+
+        Ok(())
+    }
+
+    async fn unsubscribe(&mut self, event: Event) -> Result<()> {
+        self.subscriptions.remove(&event.ticker);
+
+        for contract in event.contracts {
+            self.contract_to_event_index
+                .remove(&contract.instrument_symbol);
+
+            // drop dead book
+            tracing::info!("removing dead book: {}", &contract.instrument_symbol);
+            self.orderbooks.remove(&contract.instrument_symbol);
+
+            let payload =
+                Subscriptions::Unsubscribe(Stream::DifferentialDepth(contract.instrument_symbol));
+            self.request_tx.send(payload.into()).await?;
+        }
+
+        Ok(())
+    }
+
+    async fn resubscribe(&mut self, symbol: String) -> Result<()> {
+        tracing::info!("resubbbing to {symbol}");
+        let payload = vec![
+            Subscriptions::Unsubscribe(Stream::DifferentialDepth(symbol.clone())),
+            Subscriptions::Subscribe(Stream::DifferentialDepth(symbol)),
+        ];
+
+        self.request_tx.send(payload.into()).await?;
+
+        Ok(())
+    }
+
     pub async fn poll(&mut self) -> Result<()> {
         println!("Performing scheduled api poll for Gemini");
         let events = self.api_client.list_prediction_market_events().await?;
 
-        // need logic to remove symbols in subscriptions which no longer appear in api response
-        // additionally, it probably makes sense to handle removing 'dead' orderbooks here too
-        // if orderbooks is Arc<DashMap>, whenever we do a poll we can remove from orderbooks the symbols
-        // which we are unsubscribing from
-        // we shouldn't run into any contention here because if the contract is no longer active, BookKeeper
-        // will no longer be receiving data for that symbol and therefore will not be accessing it
-
-        for mut event in events {
+        for event in events {
             // check if we have this market in our sub map
             if self.subscriptions.contains_key(&event.ticker) {
                 // if we have it and its active, no action
@@ -63,43 +111,10 @@ impl MarketPoller {
                     continue;
                 } else {
                     // if we have it and its not active, unsub
-                    self.subscriptions.remove(&event.ticker);
-
-                    for contract in event.contracts {
-                        self.contract_to_event_index
-                            .remove(&contract.instrument_symbol);
-
-                        // drop dead book
-                        tracing::info!("removing dead book: {}", &contract.instrument_symbol);
-                        self.orderbooks.remove(&contract.instrument_symbol);
-
-                        let payload = Subscriptions::Unsubscribe(Stream::DifferentialDepth(
-                            contract.instrument_symbol,
-                        ));
-                        self.request_tx.send(payload.into()).await?;
-                    }
+                    self.unsubscribe(event).await?
                 }
             } else if event.status == "active" {
-                // subscribe
-                for contract in &event.contracts {
-                    if contract
-                        .market_state
-                        .as_ref()
-                        .is_some_and(|state| state == "open")
-                    {
-                        let payload = Subscriptions::Subscribe(Stream::DifferentialDepth(
-                            contract.instrument_symbol.clone(),
-                        ));
-                        self.request_tx.send(payload.into()).await?;
-
-                        // as a first pass we'll just clone, this should be optimized later
-                        self.contract_to_event_index
-                            .insert(contract.instrument_symbol.clone(), event.ticker.clone());
-                    }
-                }
-
-                self.subscriptions
-                    .insert(std::mem::take(&mut event.ticker), event);
+                self.subscribe(event).await?
             }
         }
 
@@ -120,14 +135,7 @@ impl MarketPoller {
                 resub = self.resub_rx.recv() => {
                     match resub {
                         Some(symbol) => {
-                            tracing::info!("resubbbing to {symbol}");
-                            let payload = vec![
-                                Subscriptions::Unsubscribe(Stream::DifferentialDepth(symbol.clone())),
-                                Subscriptions::Subscribe(Stream::DifferentialDepth(symbol))
-                            ];
-                            if self.request_tx.send(payload.into()).await.is_err() {
-                                break
-                            }
+                            let _ = self.resubscribe(symbol).await;
                         }
 
                         None => break
