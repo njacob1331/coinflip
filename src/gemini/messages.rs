@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize, Serializer};
 
 use crate::{
     session::{Payload, Priority, Request},
-    traits::HasPriority,
+    traits::Prioritize,
 };
 
 #[derive(Debug)]
@@ -21,7 +21,7 @@ pub enum Subscriptions {
     Unsubscribe(Stream),
 }
 
-impl HasPriority for Subscriptions {
+impl Prioritize for Subscriptions {
     fn priority(&self) -> Priority {
         Priority::Low
     }

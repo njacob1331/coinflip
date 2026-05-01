@@ -1,5 +1,5 @@
 use crate::{
-    traits::{HasPriority, Parser, Router},
+    traits::{Parser, Prioritize, Router},
     ws::Ws,
 };
 use anyhow::Result;
@@ -37,7 +37,7 @@ pub struct Request<T> {
 
 impl<T> From<Payload<T>> for Request<T>
 where
-    T: HasPriority,
+    T: Prioritize,
 {
     fn from(payload: Payload<T>) -> Self {
         let priority = match &payload {
@@ -84,7 +84,7 @@ struct Session<T> {
 
 impl<T> Session<T>
 where
-    T: HasPriority + Serialize + Send + 'static,
+    T: Prioritize + Serialize + Send + 'static,
 {
     async fn new<P, M, R>(url: &str, parser: Arc<P>, router: Arc<R>) -> Result<Self>
     where
@@ -187,7 +187,7 @@ impl SessionManager {
         P: Parser<M> + Send + 'static,
         R: Router<M> + Send + 'static,
         M: Send + 'static,
-        T: HasPriority + Serialize + Send + 'static,
+        T: Prioritize + Serialize + Send + 'static,
     {
         let parser = Arc::new(parser);
         let router = Arc::new(router);

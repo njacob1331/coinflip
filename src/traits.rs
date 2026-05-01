@@ -18,6 +18,6 @@ where
     async fn route(&self, msg: T) -> Result<()>;
 }
 
-pub trait HasPriority {
+pub trait Prioritize {
     fn priority(&self) -> Priority;
 }
