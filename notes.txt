@@ -1,0 +1,3 @@
+the optimal architecture for shared state (ex stats engine) would
+probably be to use Arc<DashMap> and have each task update only what it knows aboit
+(ex sub manager adds Market info but stats engine adds correlation info)
