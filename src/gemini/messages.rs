@@ -13,6 +13,7 @@ pub enum Stream {
     Trade(String),
     Order,
     Balance,
+    ContractStatus
 }
 
 #[derive(Debug)]
@@ -82,6 +83,11 @@ impl Serialize for Subscriptions {
                     id: "balance",
                     method,
                     params: ["balances@account".to_string()],
+                },
+                Stream::ContractStatus => SubscriptionMessage {
+                    id: "contract-status",
+                    method,
+                    params: ["contractStatus".to_string()],
                 },
             }
         }
