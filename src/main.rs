@@ -45,6 +45,7 @@ async fn main() -> Result<()> {
     let mut router = GeminiRouter::new();
     let orderbook_rx = router.connect("orderbook");
     let mut balance_rx = router.balance_rx();
+    let mut subscription_err_rx = router.subscription_err_rx();
 
     let mut bookeeper = BookKeeper::new(resub_tx);
     let client = Arc::new(GeminiClient::new());
@@ -81,7 +82,7 @@ async fn main() -> Result<()> {
 
     let cancel = shutdown.clone();
     let producer_task = tokio::spawn(async move {
-        poller.run(cancel).await;
+        poller.run(subscription_err_rx, cancel).await;
     });
 
     tokio::select! {
