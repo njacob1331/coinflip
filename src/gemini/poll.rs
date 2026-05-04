@@ -44,6 +44,11 @@ impl MarketPoller {
         }
     }
 
+    async fn static_streams(&self) -> Result<()> {
+        let payload = Subscriptions::Subscribe(Stream::ContractStatus);
+        self.request_tx.send(payload.into()).await?;
+    }
+
     async fn subscribe(&mut self, mut event: Event) -> Result<()> {
         for contract in &event.contracts {
             if contract
