@@ -95,6 +95,7 @@ impl Serialize for Subscriptions {
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    ContractStatus(ContractStatus),
     OrderbookUpdate(OrderbookUpdate),
     SubscriptionError(SubscriptionError),
     BalanceUpdate(BalanceUpdate),
@@ -189,4 +190,14 @@ pub struct AssetBalance {
     pub asset: String,
     #[serde(rename = "f")]
     pub balance: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct ContractStatus {
+    #[serde(rename = "s")]
+    pub symbol: String,
+    #[serde(rename = "o")]
+    pub previous_status: String,
+    #[serde(rename = "n")]
+    pub new_status: String,
 }
