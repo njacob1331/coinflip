@@ -85,6 +85,11 @@ impl BookKeeper {
         connection_reset: Arc<Notify>,
         cancel: CancellationToken,
     ) {
+
+        // we don't need multiple branches here
+        // this should simply read from the channel until it dies
+        // the lifecycle can be controlled upstream and centralized to the session
+        
         loop {
             tokio::select! {
                 _ = cancel.cancelled() => break,
