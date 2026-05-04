@@ -11,7 +11,7 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     gemini::{
         client::GeminiClient,
-        messages::{Stream, Subscriptions},
+        messages::{Stream, Subscriptions, SubscriptionError},
         orderbook::Orderbook,
         responses::{Contract, Event, Market},
     },
