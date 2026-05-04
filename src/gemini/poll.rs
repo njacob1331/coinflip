@@ -123,7 +123,7 @@ impl MarketPoller {
         Ok(())
     }
 
-    pub async fn run(&mut self, cancel: CancellationToken) {
+    pub async fn run(&mut self, subscription_err_rx: Receiver<SubscriptionError>, cancel: CancellationToken) {
         let mut interval = tokio::time::interval(Duration::from_secs(60));
 
         loop {
@@ -141,6 +141,17 @@ impl MarketPoller {
                         None => break
                     }
                 },
+
+                sub_err = subscription_err_rx.recv() => {
+                    match sub_err {
+                        Some(error) => {
+                            self.subscriptions.remove(&error.id);
+                        }
+
+                        None => break
+                    }
+                },
+                
                 _ = interval.tick() => {
                     if let Err(e) = self.poll().await {
                         eprintln!("api poll error: {e}")
