@@ -5,13 +5,19 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     bookkeeper::BookKeeper,
     gemini::{
-        client::GeminiClient, messages::Subscriptions, parser::GeminiParser, poll::MarketPoller,
+        client::GeminiClient,
+        messages::Subscriptions,
+        parser::GeminiParser,
+        poll::{MetaDataRepo, SubscriptionManager},
+        responses::BinaryPredictionMarket,
         router::GeminiRouter,
     },
     session::{Payload, Request, SessionManager},
+    stats::matcher::{MetadataTransportMsg, StructuralCorrelationGraph},
 };
 
 mod bookkeeper;
+mod common;
 mod gemini;
 mod session;
 mod stats;
@@ -40,19 +46,32 @@ async fn main() -> Result<()> {
     let (request_tx, request_rx) = tokio::sync::mpsc::channel::<Payload<Subscriptions>>(32);
     let order_tx = request_tx.clone();
     let (resub_tx, resub_rx) = tokio::sync::mpsc::channel::<String>(32);
+    let (market_metadata_tx, mut market_metadata_rx) =
+        tokio::sync::mpsc::channel::<MetadataTransportMsg<BinaryPredictionMarket>>(32);
 
     let parser = GeminiParser::new();
     let mut router = GeminiRouter::new();
-    let orderbook_rx = router.connect("orderbook");
+    let mut orderbook_rx = router.orderbook_rx();
     let mut balance_rx = router.balance_rx();
     let mut subscription_err_rx = router.subscription_err_rx();
+    let mut contract_status_rx = router.contract_status_rx();
+    let contract_metadata_rx = router.contract_metadata_rx();
 
     let mut bookeeper = BookKeeper::new(resub_tx);
     let client = Arc::new(GeminiClient::new());
     let mut session_manager = SessionManager::new();
     let connection_listener = session_manager.connection_listener();
-    let mut poller =
-        MarketPoller::new(client.clone(), request_tx, resub_rx, bookeeper.orderbooks());
+    let mut sub_manager = SubscriptionManager::new(request_tx, resub_rx, bookeeper.orderbooks());
+
+    let matcher_task = tokio::spawn(async move {
+        let mut matcher = StructuralCorrelationGraph::new();
+        matcher.run(&mut market_metadata_rx).await;
+    });
+
+    let metadata_task = tokio::spawn(async move {
+        let mut metadata_repo = MetaDataRepo::new(client.clone(), market_metadata_tx);
+        metadata_repo.run(contract_metadata_rx).await;
+    });
 
     let balance_task = tokio::spawn(async move {
         while let Some(balance) = balance_rx.recv().await {
@@ -81,8 +100,10 @@ async fn main() -> Result<()> {
     });
 
     let cancel = shutdown.clone();
-    let producer_task = tokio::spawn(async move {
-        poller.run(subscription_err_rx, cancel).await;
+    let sub_manager_task = tokio::spawn(async move {
+        sub_manager
+            .run(subscription_err_rx, contract_status_rx, cancel)
+            .await;
     });
 
     tokio::select! {
@@ -92,7 +113,7 @@ async fn main() -> Result<()> {
         }
     }
 
-    let _ = tokio::join!(consumer_task, manager_task, producer_task);
+    let _ = tokio::join!(consumer_task, manager_task, sub_manager_task);
 
     Ok(())
 }

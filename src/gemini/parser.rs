@@ -7,6 +7,7 @@ pub struct GeminiParser<'f> {
     balance_finder: Finder<'f>,
     error_finder: Finder<'f>,
     code_finder: Finder<'f>,
+    contract_status_finder: Finder<'f>,
 }
 
 impl<'f> GeminiParser<'f> {
@@ -16,6 +17,7 @@ impl<'f> GeminiParser<'f> {
             balance_finder: Finder::new("\"balanceUpdate\""),
             error_finder: Finder::new("\"error\""),
             code_finder: Finder::new("\"code\""),
+            contract_status_finder: Finder::new("\"contractStatus\""),
         }
     }
 }
@@ -23,7 +25,10 @@ impl<'f> GeminiParser<'f> {
 impl<'f> Parser<Message> for GeminiParser<'f> {
     fn parse(&self, bytes: &[u8]) -> anyhow::Result<Message> {
         if self.depth_finder.find(bytes).is_some() {
-            return Ok(Message::OrderbookUpdate(sonic_rs::from_slice(bytes)?));
+            return Ok(Message::L2DifferentialDepth(sonic_rs::from_slice(bytes)?));
+        }
+        if self.contract_status_finder.find(bytes).is_some() {
+            return Ok(Message::ContractStatus(sonic_rs::from_slice(bytes)?));
         }
         if self.balance_finder.find(bytes).is_some() {
             return Ok(Message::BalanceUpdate(sonic_rs::from_slice(bytes)?));

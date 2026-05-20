@@ -1,99 +1,148 @@
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+    time::Duration,
+};
 
 use anyhow::Result;
 use dashmap::{DashMap, DashSet};
-use tokio::sync::{
-    Notify,
-    mpsc::{Receiver, Sender},
+use tokio::{
+    sync::{
+        Notify,
+        mpsc::{Receiver, Sender},
+    },
+    time::sleep,
 };
 use tokio_util::sync::CancellationToken;
+
+// this is priority one
+// need to solve for the following:
+// 1. maintain an accurate list of subscriptions
+// 2. ensure event metadata is up to date
+// 3. be able to map contracts to events
+//
+// the parent event id is embedded in the contract id
+// the contractStatus stream will tell us when new events/contracts are created and when the strike changes
 
 use crate::{
     gemini::{
         client::GeminiClient,
-        messages::{Stream, Subscriptions, SubscriptionError},
-        orderbook::Orderbook,
-        responses::{Contract, Event, Market},
+        messages::{ContractStatus, Stream, SubscriptionError, Subscriptions},
+        orderbook::GeminiOrderbook,
+        responses::{BinaryPredictionMarket, Contract, Event, Strike},
     },
     session::{Payload, Request},
+    stats::matcher::MetadataTransportMsg,
+    traits::Metadata,
 };
 
-pub struct MarketPoller {
-    api_client: Arc<GeminiClient>,
-    request_tx: Sender<Payload<Subscriptions>>,
-    resub_rx: Receiver<String>,
-    subscriptions: DashMap<String, Event>,
-    contract_to_event_index: HashMap<String, String>,
-    orderbooks: Arc<DashMap<String, Orderbook>>,
+pub struct MetaDataRepo {
+    client: Arc<GeminiClient>,
+    metadata: HashSet<String>,
+    metadata_tx: Sender<MetadataTransportMsg<BinaryPredictionMarket>>,
 }
 
-impl MarketPoller {
+impl MetaDataRepo {
     pub fn new(
-        api_client: Arc<GeminiClient>,
-        request_tx: Sender<Payload<Subscriptions>>,
-        resub_rx: Receiver<String>,
-        orderbooks: Arc<DashMap<String, Orderbook>>,
+        client: Arc<GeminiClient>,
+        metadata_tx: Sender<MetadataTransportMsg<BinaryPredictionMarket>>,
     ) -> Self {
         Self {
-            api_client,
-            request_tx,
-            resub_rx,
-            subscriptions: DashMap::new(),
-            contract_to_event_index: HashMap::new(),
-            orderbooks,
+            client,
+            metadata: HashSet::new(),
+            metadata_tx,
         }
     }
 
-    async fn static_streams(&self) -> Result<()> {
-        let payload = Subscriptions::Subscribe(Stream::ContractStatus);
-        self.request_tx.send(payload.into()).await?;
-    }
-
-    async fn subscribe(&mut self, mut event: Event) -> Result<()> {
-        for contract in &event.contracts {
-            if contract
-                .market_state
-                .as_ref()
-                .is_some_and(|state| state == "open")
-            {
-                let payload = Subscriptions::Subscribe(Stream::DifferentialDepth(
-                    contract.instrument_symbol.clone(),
-                ));
-                self.request_tx.send(payload.into()).await?;
-
-                // as a first pass we'll just clone, this should be optimized later
-                self.contract_to_event_index
-                    .insert(contract.instrument_symbol.clone(), event.ticker.clone());
-            }
+    async fn fetch_and_forward(&mut self, event_ticker: &str, contract_ticker: &str) -> Result<()> {
+        if self.metadata.contains(contract_ticker) {
+            return Ok(());
         }
 
-        self.subscriptions
-            .insert(std::mem::take(&mut event.ticker), event);
+        let mut event = self.client.get_event_by_ticker(event_ticker).await?;
+        let contracts = event.take_contracts();
+        let event = Arc::new(event);
+
+        for contract in contracts {
+            let metadata = BinaryPredictionMarket::new(event.clone(), contract);
+            self.metadata.insert(metadata.ticker().to_string());
+            self.metadata_tx.send(metadata.into()).await?;
+        }
 
         Ok(())
     }
 
-    async fn unsubscribe(&mut self, event: Event) -> Result<()> {
-        self.subscriptions.remove(&event.ticker);
+    async fn remove_and_forward(&mut self, contract_ticker: &str) -> Result<()> {
+        self.metadata.remove(contract_ticker);
+        self.metadata_tx
+            .send(MetadataTransportMsg::Remove(contract_ticker.to_string()))
+            .await?;
 
-        for contract in event.contracts {
-            self.contract_to_event_index
-                .remove(&contract.instrument_symbol);
+        Ok(())
+    }
 
-            // drop dead book
-            tracing::info!("removing dead book: {}", &contract.instrument_symbol);
-            self.orderbooks.remove(&contract.instrument_symbol);
+    pub async fn run(&mut self, mut contract_status_rx: Receiver<Arc<ContractStatus>>) {
+        while let Some(msg) = contract_status_rx.recv().await {
+            match msg.new_status.as_str() {
+                "Settled" => {
+                    if let Err(e) = self.remove_and_forward(&msg.symbol).await {
+                        tracing::error!("GEMINI: metadata error {e}")
+                    }
+                }
 
-            let payload =
-                Subscriptions::Unsubscribe(Stream::DifferentialDepth(contract.instrument_symbol));
-            self.request_tx.send(payload.into()).await?;
+                _ => {
+                    if let Err(e) = self.fetch_and_forward(&msg.event_ticker, &msg.symbol).await {
+                        tracing::error!("GEMINI: metadata error {e}")
+                    }
+                }
+            }
         }
+    }
+}
+
+pub struct SubscriptionManager {
+    request_tx: Sender<Payload<Subscriptions>>,
+    resub_rx: Receiver<String>,
+    subscriptions: HashSet<String>,
+    orderbooks: Arc<DashMap<String, GeminiOrderbook>>,
+}
+
+impl SubscriptionManager {
+    pub fn new(
+        request_tx: Sender<Payload<Subscriptions>>,
+        resub_rx: Receiver<String>,
+        orderbooks: Arc<DashMap<String, GeminiOrderbook>>,
+    ) -> Self {
+        Self {
+            request_tx,
+            resub_rx,
+            orderbooks,
+            subscriptions: HashSet::new(),
+        }
+    }
+
+    async fn subscribe_static_streams(&self) -> Result<()> {
+        let payload = Subscriptions::Subscribe(Stream::ContractStatus);
+        self.request_tx.send(payload.into()).await?;
+
+        Ok(())
+    }
+
+    async fn subscribe(&mut self, symbol: String) -> Result<()> {
+        let payload = Subscriptions::Subscribe(Stream::DifferentialDepth(symbol));
+        self.request_tx.send(payload.into()).await?;
+
+        Ok(())
+    }
+
+    async fn unsubscribe(&mut self, symbol: String) -> Result<()> {
+        let payload = Subscriptions::Unsubscribe(Stream::DifferentialDepth(symbol));
+        self.request_tx.send(payload.into()).await?;
 
         Ok(())
     }
 
     async fn resubscribe(&mut self, symbol: String) -> Result<()> {
-        tracing::info!("resubbbing to {symbol}");
         let payload = vec![
             Subscriptions::Unsubscribe(Stream::DifferentialDepth(symbol.clone())),
             Subscriptions::Subscribe(Stream::DifferentialDepth(symbol)),
@@ -104,32 +153,43 @@ impl MarketPoller {
         Ok(())
     }
 
-    pub async fn poll(&mut self) -> Result<()> {
-        println!("Performing scheduled api poll for Gemini");
-        let events = self.api_client.list_prediction_market_events().await?;
+    async fn handle_status_msg(&mut self, msg: Arc<ContractStatus>) -> Result<()> {
+        match msg.new_status.as_str() {
+            "Settled" => {
+                tracing::info!(
+                    "GEMINI: {} settled, unsubscribing and removing orderbook",
+                    &msg.symbol
+                );
+                self.subscriptions.remove(&msg.symbol);
+                self.orderbooks.remove(&msg.symbol);
+                self.unsubscribe(msg.symbol.clone()).await?
+            }
 
-        for event in events {
-            // check if we have this market in our sub map
-            if self.subscriptions.contains_key(&event.ticker) {
-                // if we have it and its active, no action
-                if event.status == "active" {
-                    continue;
-                } else {
-                    // if we have it and its not active, unsub
-                    self.unsubscribe(event).await?
+            _ => {
+                let subscribed = self.subscriptions.contains(&msg.symbol);
+                if !subscribed {
+                    tracing::info!(
+                        "GEMINI: subscribing to previously untracked market {}",
+                        &msg.symbol
+                    );
+                    self.subscribe(msg.symbol.clone()).await?;
+                    self.subscriptions.insert(msg.symbol.clone());
                 }
-            } else if event.status == "active" {
-                self.subscribe(event).await?
             }
         }
-
-        tracing::info!("subscribed to {} markets", self.subscriptions.len());
 
         Ok(())
     }
 
-    pub async fn run(&mut self, subscription_err_rx: Receiver<SubscriptionError>, cancel: CancellationToken) {
-        let mut interval = tokio::time::interval(Duration::from_secs(60));
+    pub async fn run(
+        &mut self,
+        mut subscription_err_rx: Receiver<SubscriptionError>,
+        mut contract_status_rx: Receiver<Arc<ContractStatus>>,
+        cancel: CancellationToken,
+    ) {
+        // let mut interval = tokio::time::interval(Duration::from_secs(60));
+        let _ = self.subscribe_static_streams().await;
+        // let _ = self.seed().await;
 
         loop {
             tokio::select! {
@@ -150,16 +210,21 @@ impl MarketPoller {
                 sub_err = subscription_err_rx.recv() => {
                     match sub_err {
                         Some(error) => {
-                            self.subscriptions.remove(&error.id);
+                            tracing::error!("subscription error: {error:#?}")
                         }
 
                         None => break
                     }
                 },
-                
-                _ = interval.tick() => {
-                    if let Err(e) = self.poll().await {
-                        eprintln!("api poll error: {e}")
+
+                contract_status = contract_status_rx.recv() => {
+                    match contract_status {
+                        Some(status) => {
+                            let _ = self.handle_status_msg(status).await;
+
+                        }
+
+                        None => break
                     }
                 }
             }

@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize, Serializer};
 
 use crate::{
     session::{Payload, Priority, Request},
-    traits::Prioritize,
+    traits::{OrderbookData, Prioritize},
 };
 
 #[derive(Debug)]
@@ -13,7 +13,8 @@ pub enum Stream {
     Trade(String),
     Order,
     Balance,
-    ContractStatus
+    ContractStatus,
+    ConnInfo,
 }
 
 #[derive(Debug)]
@@ -28,15 +29,15 @@ impl Prioritize for Subscriptions {
     }
 }
 
-impl From<Vec<Subscriptions>> for Payload<Subscriptions> {
-    fn from(value: Vec<Subscriptions>) -> Self {
-        Payload::Batch(value)
-    }
-}
-
 impl From<Subscriptions> for Payload<Subscriptions> {
     fn from(value: Subscriptions) -> Self {
         Payload::Single(value)
+    }
+}
+
+impl From<Vec<Subscriptions>> for Payload<Subscriptions> {
+    fn from(value: Vec<Subscriptions>) -> Self {
+        Payload::Batch(value)
     }
 }
 
@@ -89,6 +90,11 @@ impl Serialize for Subscriptions {
                     method,
                     params: ["contractStatus".to_string()],
                 },
+                Stream::ConnInfo => SubscriptionMessage {
+                    id: "conn-info",
+                    method: "conninfo",
+                    params: ["{}".to_string()],
+                },
             }
         }
 
@@ -102,7 +108,7 @@ impl Serialize for Subscriptions {
 #[derive(Debug, Clone)]
 pub enum Message {
     ContractStatus(ContractStatus),
-    OrderbookUpdate(OrderbookUpdate),
+    L2DifferentialDepth(L2DifferentialDepth),
     SubscriptionError(SubscriptionError),
     BalanceUpdate(BalanceUpdate),
     Unknown,
@@ -122,7 +128,7 @@ pub struct SubscriptionErrorMsg {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct OrderbookUpdate {
+pub struct L2DifferentialDepth {
     // #[serde(rename = "e")]
     // pub event_type: String,
 
@@ -142,6 +148,20 @@ pub struct OrderbookUpdate {
 
     #[serde(rename = "a")]
     pub asks: Vec<PriceLevel>,
+}
+
+impl OrderbookData for L2DifferentialDepth {
+    fn key(&self) -> &str {
+        &self.symbol
+    }
+
+    fn take_key(&mut self) -> String {
+        std::mem::take(&mut self.symbol)
+    }
+
+    fn is_snapshot(&self) -> bool {
+        self.first_update_id == self.last_update_id
+    }
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -200,10 +220,20 @@ pub struct AssetBalance {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct ContractStatus {
+    #[serde(rename = "k")]
+    pub event_ticker: String,
     #[serde(rename = "s")]
     pub symbol: String,
+    #[serde(rename = "p")]
+    pub strike: Option<String>,
     #[serde(rename = "o")]
     pub previous_status: String,
     #[serde(rename = "n")]
     pub new_status: String,
+}
+
+impl ContractStatus {
+    pub fn is_strike_update(&self) -> bool {
+        self.previous_status == self.new_status
+    }
 }

@@ -3,36 +3,47 @@ use std::{
     sync::Arc,
 };
 
-use dashmap::DashMap;
 use rust_decimal::Decimal;
 use tokio::sync::mpsc::Receiver;
 
-type EventTicker = String;
-type ContractTicker = String;
+#[derive(Debug)]
+struct PredictionMarketDetails {
+    ticker: String,
+    category: String,
+    expiry: String,
+}
 
 #[derive(Debug)]
-struct OrderbookSnapshot {
-    symbol: String,
-    bid: Decimal,
-    ask: Decimal,
+struct StockMarketDetails {
+    ticker: String,
 }
 
-struct CorrelationMatrix {
-    matrix: BTreeMap<ContractTicker, Decimal>,
+#[derive(Debug)]
+struct OptionsMarketDetails {
+    ticker: String,
+    expiry: String,
+    strike: String,
 }
 
-impl CorrelationMatrix {
-    fn update(update: &OrderbookSnapshot) {}
+#[derive(Debug)]
+enum MarketInfo {
+    Prediction(PredictionMarketDetails),
+    Stock(StockMarketDetails),
+    Options(OptionsMarketDetails),
 }
 
-struct StatsEngine {
-    correlation_matrices: HashMap<ContractTicker, CorrelationMatrix>,
+struct MarketCorrelationMatrix {
+    matrix: BTreeMap<String, (String, Decimal)>,
 }
 
-impl StatsEngine {
-    async fn compute(&self, mut rx: Receiver<OrderbookSnapshot>) {
-        while let Some(update) = rx.recv().await {
-            self.correlation_matrices.get(&update.symbol);
+struct MarketMatcher {
+    correlation_map: HashMap<String, MarketCorrelationMatrix>,
+}
+
+impl MarketMatcher {
+    async fn compute(&self, mut rx: Receiver<MarketInfo>) {
+        while let Some(info) = rx.recv().await {
+            tracing::info!("{info:#?}")
         }
     }
 }

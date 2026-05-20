@@ -14,6 +14,21 @@ impl GeminiClient {
         }
     }
 
+    pub async fn get_event_by_ticker(&self, ticker: &str) -> Result<Event> {
+        let url = format!("https://api.gemini.com/v1/prediction-markets/events/{ticker}");
+
+        let res = self
+            .inner
+            .get(&url)
+            .send()
+            .await
+            .with_context(|| format!("request to {} failed", url))?;
+
+        let parsed: Event = res.json().await?;
+
+        Ok(parsed)
+    }
+
     pub async fn list_prediction_market_events(&self) -> Result<Vec<Event>> {
         let url = "https://api.gemini.com/v1/prediction-markets/events";
 

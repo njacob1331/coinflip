@@ -144,11 +144,8 @@ where
                 request = request_rx.recv() => {
                     match request {
                         Some(req) => {
-                            self.pq.push(req.into());
-                            if let Err(e) = self.forward_from_queue().await {
-                                println!("failed to forward ws message, channel closed: {e}");
-                                break;
-                            }
+                            // need to work on pq logic at some point
+                            self.session_tx.send(req.into()).await;
                         },
                         None => break
                     }

@@ -1,7 +1,9 @@
 use anyhow::Result;
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
+use rust_decimal::Decimal;
 
-use crate::session::Priority;
+use crate::{common::MarketCategory, session::Priority};
 
 pub trait Parser<T>: Send + Sync
 where
@@ -20,4 +22,33 @@ where
 
 pub trait Prioritize {
     fn priority(&self) -> Priority;
+}
+
+pub trait OrderBook<T>
+where
+    T: OrderbookData,
+{
+    fn from_snapshot(snapshot: T) -> Self;
+    fn update(&mut self, update: T);
+    // fn bid(&self) -> Option<Decimal>;
+    // fn ask(&self) -> Option<Decimal>;
+    // fn mid(&self) -> Option<Decimal>;
+    // fn spread(&self) -> Option<Decimal>;
+    fn valid_sequence(&self, update: &T) -> bool;
+    fn corrupted(&self, update: T) -> bool;
+}
+
+pub trait OrderbookData {
+    fn key(&self) -> &str;
+    fn take_key(&mut self) -> String;
+    fn is_snapshot(&self) -> bool;
+}
+
+pub trait Metadata {
+    fn ticker(&self) -> &str;
+    fn category(&self) -> &MarketCategory;
+
+    // fn expiration(&self) -> Option<DateTime<Utc>>;
+    // fn underlying_asset(&self) -> &str;
+    // fn strike(&self) -> Option<&str>;
 }

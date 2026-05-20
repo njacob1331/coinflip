@@ -1,18 +1,26 @@
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use tokio::sync::mpsc::{Receiver, Sender, channel};
 
 use crate::{
-    gemini::messages::{BalanceUpdate, Message, OrderbookUpdate, SubscriptionError},
+    gemini::messages::{
+        BalanceUpdate, ContractStatus, L2DifferentialDepth, Message, SubscriptionError,
+    },
     traits::Router,
 };
 
 pub struct GeminiRouter {
-    orderbook_tx: Sender<OrderbookUpdate>,
-    orderbook_rx: Option<Receiver<OrderbookUpdate>>,
+    orderbook_tx: Sender<L2DifferentialDepth>,
+    orderbook_rx: Option<Receiver<L2DifferentialDepth>>,
     balance_tx: Sender<BalanceUpdate>,
     balance_rx: Option<Receiver<BalanceUpdate>>,
     subscription_err_tx: Sender<SubscriptionError>,
     subscription_err_rx: Option<Receiver<SubscriptionError>>,
+    contract_status_tx: Sender<Arc<ContractStatus>>,
+    contract_status_rx: Option<Receiver<Arc<ContractStatus>>>,
+    contract_metadata_tx: Sender<Arc<ContractStatus>>,
+    contract_metadata_rx: Option<Receiver<Arc<ContractStatus>>>,
 }
 
 impl GeminiRouter {
@@ -20,6 +28,8 @@ impl GeminiRouter {
         let (orderbook_tx, orderbook_rx) = channel(256);
         let (balance_tx, balance_rx) = channel(32);
         let (subscription_err_tx, subscription_err_rx) = channel(32);
+        let (contract_status_tx, contract_status_rx) = channel(32);
+        let (contract_metadata_tx, contract_metadata_rx) = channel(32);
 
         Self {
             orderbook_tx,
@@ -27,8 +37,16 @@ impl GeminiRouter {
             balance_tx,
             balance_rx: Some(balance_rx),
             subscription_err_tx,
-            subscription_err_rx: Some(subscription_err_rx)
+            subscription_err_rx: Some(subscription_err_rx),
+            contract_status_tx,
+            contract_status_rx: Some(contract_status_rx),
+            contract_metadata_tx,
+            contract_metadata_rx: Some(contract_metadata_rx),
         }
+    }
+
+    pub fn orderbook_rx(&mut self) -> Receiver<L2DifferentialDepth> {
+        self.orderbook_rx.take().unwrap()
     }
 
     pub fn balance_rx(&mut self) -> Receiver<BalanceUpdate> {
@@ -39,11 +57,12 @@ impl GeminiRouter {
         self.subscription_err_rx.take().unwrap()
     }
 
-    pub fn connect(&mut self, channel: &str) -> Receiver<OrderbookUpdate> {
-        match channel {
-            "orderbook" => self.orderbook_rx.take().unwrap(),
-            _ => panic!("unknown channel: {channel}"),
-        }
+    pub fn contract_status_rx(&mut self) -> Receiver<Arc<ContractStatus>> {
+        self.contract_status_rx.take().unwrap()
+    }
+
+    pub fn contract_metadata_rx(&mut self) -> Receiver<Arc<ContractStatus>> {
+        self.contract_metadata_rx.take().unwrap()
     }
 }
 
@@ -51,9 +70,14 @@ impl GeminiRouter {
 impl Router<Message> for GeminiRouter {
     async fn route(&self, msg: Message) -> anyhow::Result<()> {
         match msg {
-            Message::OrderbookUpdate(update) => self.orderbook_tx.send(update).await?,
+            Message::L2DifferentialDepth(update) => self.orderbook_tx.send(update).await?,
             Message::BalanceUpdate(update) => self.balance_tx.send(update).await?,
             Message::SubscriptionError(error) => self.subscription_err_tx.send(error).await?,
+            Message::ContractStatus(status) => {
+                let status = Arc::new(status);
+                self.contract_status_tx.send(status.clone()).await?;
+                self.contract_metadata_tx.send(status).await?
+            }
             _ => {}
         }
 
