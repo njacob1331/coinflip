@@ -3,6 +3,15 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer};
 
+pub enum ObservationType {
+    Measurement,
+    Outcome,
+    Derivative,
+    Forecast,
+    // ex report released, touchdown scored, etc
+    Signal
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TimeFrame {
     Continuous,
@@ -12,6 +21,7 @@ pub enum TimeFrame {
     },
     OpenEnded {
         start: DateTime<Utc>,
+        est_end: Option<DateTime<Utc>>
     },
     ExpiresAt {
         end: DateTime<Utc>,
