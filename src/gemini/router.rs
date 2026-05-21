@@ -66,7 +66,7 @@ impl GeminiRouter {
     }
 }
 
-#[async_trait]
+// #[async_trait]
 impl Router<Message> for GeminiRouter {
     async fn route(&self, msg: Message) -> anyhow::Result<()> {
         match msg {
