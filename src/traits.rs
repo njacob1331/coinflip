@@ -3,7 +3,10 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 
-use crate::{common::MarketCategory, session::Priority};
+use crate::{
+    metadata::{Category, TimeFrame},
+    session::Priority,
+};
 
 pub trait Parser<T>: Send + Sync
 where
@@ -45,10 +48,8 @@ pub trait OrderbookData {
 }
 
 pub trait Metadata {
-    fn ticker(&self) -> &str;
-    fn category(&self) -> &MarketCategory;
-
-    // fn expiration(&self) -> Option<DateTime<Utc>>;
-    // fn underlying_asset(&self) -> &str;
-    // fn strike(&self) -> Option<&str>;
+    fn id(&self) -> &str;
+    fn category(&self) -> Category;
+    fn context(&self) -> Option<String>;
+    fn timeframe(&self) -> TimeFrame;
 }

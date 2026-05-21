@@ -29,7 +29,7 @@ use crate::{
         client::GeminiClient,
         messages::{ContractStatus, Stream, SubscriptionError, Subscriptions},
         orderbook::GeminiOrderbook,
-        responses::{BinaryPredictionMarket, Contract, Event, Strike},
+        types::BinaryPredictionMarket,
     },
     session::{Payload, Request},
     stats::matcher::MetadataTransportMsg,
@@ -64,9 +64,9 @@ impl MetaDataRepo {
         let event = Arc::new(event);
 
         for contract in contracts {
-            let metadata = BinaryPredictionMarket::new(event.clone(), contract);
-            self.metadata.insert(metadata.ticker().to_string());
-            self.metadata_tx.send(metadata.into()).await?;
+            let bp_market = BinaryPredictionMarket::new(event.clone(), contract);
+            self.metadata.insert(bp_market.id().to_string());
+            self.metadata_tx.send(bp_market.into()).await?;
         }
 
         Ok(())
@@ -193,8 +193,6 @@ impl SubscriptionManager {
 
         loop {
             tokio::select! {
-                biased;
-
                 _ = cancel.cancelled() => break,
 
                 resub = self.resub_rx.recv() => {
@@ -230,6 +228,6 @@ impl SubscriptionManager {
             }
         }
 
-        println!("market poller exiting")
+        println!("subscription manager exiting")
     }
 }

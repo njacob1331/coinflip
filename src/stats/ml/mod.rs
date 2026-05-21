@@ -8,6 +8,7 @@ use ort::{
 };
 use tokenizers::Tokenizer;
 
+#[derive(Debug)]
 pub struct EmbeddingModel {
     tokenizer: Tokenizer,
     session: Session,
@@ -99,11 +100,18 @@ impl EmbeddingModel {
     }
 
     pub fn call(&mut self, x: &str, y: &str) -> Result<f32> {
-        // impl caching
+        if !self.cache.contains_key(x) {
+            let embedding = self.embed(x)?;
+            self.cache.insert(x.to_string(), embedding);
+        }
+        if !self.cache.contains_key(y) {
+            let embedding = self.embed(y)?;
+            self.cache.insert(y.to_string(), embedding);
+        }
 
-        let x = self.embed(x)?;
-        let y = self.embed(y)?;
+        let x = &self.cache[x];
+        let y = &self.cache[y];
 
-        Ok(Self::cosine(&x, &y))
+        Ok(Self::cosine(x, y))
     }
 }

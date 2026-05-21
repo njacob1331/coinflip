@@ -5,3 +5,4 @@ pub mod parser;
 pub mod poll;
 pub mod responses;
 pub mod router;
+pub mod types;

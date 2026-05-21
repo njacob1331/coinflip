@@ -1,49 +1,40 @@
-use std::{
-    collections::{BTreeMap, HashMap},
-    sync::Arc,
-};
+// use std::collections::VecDeque;
 
-use rust_decimal::Decimal;
-use tokio::sync::mpsc::Receiver;
+// use crate::{stats::matcher::StructuralCorrelationGraph, traits::Observable};
 
-#[derive(Debug)]
-struct PredictionMarketDetails {
-    ticker: String,
-    category: String,
-    expiry: String,
-}
+// struct ObservationWindow<T> {
+//     observations: VecDeque<T>,
+//     capacity: usize,
+// }
 
-#[derive(Debug)]
-struct StockMarketDetails {
-    ticker: String,
-}
+// impl<T> ObservationWindow<T> {
+//     fn new(capacity: usize) -> Self {
+//         Self {
+//             observations: VecDeque::with_capacity(capacity),
+//             capacity,
+//         }
+//     }
 
-#[derive(Debug)]
-struct OptionsMarketDetails {
-    ticker: String,
-    expiry: String,
-    strike: String,
-}
+//     fn update(&mut self, obs: T) {
+//         if self.observations.len() == self.capacity {
+//             self.observations.pop_front();
+//         }
 
-#[derive(Debug)]
-enum MarketInfo {
-    Prediction(PredictionMarketDetails),
-    Stock(StockMarketDetails),
-    Options(OptionsMarketDetails),
-}
+//         self.observations.push_back(obs);
+//     }
+// }
 
-struct MarketCorrelationMatrix {
-    matrix: BTreeMap<String, (String, Decimal)>,
-}
+// struct StatsEngine<O> {
+//     similarity_graph: StructuralCorrelationGraph<O>,
+// }
 
-struct MarketMatcher {
-    correlation_map: HashMap<String, MarketCorrelationMatrix>,
-}
-
-impl MarketMatcher {
-    async fn compute(&self, mut rx: Receiver<MarketInfo>) {
-        while let Some(info) = rx.recv().await {
-            tracing::info!("{info:#?}")
-        }
-    }
-}
+// impl<O> StatsEngine<O>
+// where
+//     O: Observable,
+// {
+//     fn new() -> Self {
+//         Self {
+//             similarity_graph: StructuralCorrelationGraph::new(),
+//         }
+//     }
+// }

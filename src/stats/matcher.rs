@@ -1,125 +1,157 @@
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use std::collections::HashMap;
 use tokio::sync::mpsc::Receiver;
 
 use crate::{stats::ml::EmbeddingModel, traits::Metadata};
+use slotmap::{SlotMap, new_key_type};
 
-#[derive(Debug, Clone)]
+// ── Correlation ───────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy)]
 struct StructuralCorrelation {
     categorical_similarity: Option<f32>,
-    strike_similarity: Option<f32>,
-    expiration_similarity: Option<f32>,
+    semantic_similarity: Option<f32>,
     agg_similarity: f32,
 }
 
 impl StructuralCorrelation {
-    fn compute<M: Metadata>(model: &mut EmbeddingModel, x: &M, y: &M) -> Self {
-        let categorical_similarity = {
-            if x.category() == y.category() {
-                Some(1.0)
-            } else {
-                model
-                    .call(x.category().as_str(), y.category().as_str())
-                    .ok()
-            }
+    fn compare<S>(x: &S, y: &S) -> Option<f32>
+    where
+        S: PartialEq + AsRef<str>,
+    {
+        if x == y {
+            return Some(1.0);
+        }
+
+        Some(0.0)
+    }
+
+    fn compute<M>(x: &M, y: &M) -> Self
+    where
+        M: Metadata,
+    {
+        let categorical_similarity = Self::compare(&x.category(), &y.category());
+
+        let semantic_similarity = match (x.context(), y.context()) {
+            (Some(x), Some(y)) => Self::compare(&x, &y),
+            _ => None,
         };
 
-        let agg_similarity = (categorical_similarity.unwrap_or(0.0)) / 4.0;
+        let agg_similarity =
+            (categorical_similarity.unwrap_or(0.0) + semantic_similarity.unwrap_or(0.0)) / 2.0;
 
         Self {
             categorical_similarity,
-            strike_similarity: None,
-            expiration_similarity: None,
+            semantic_similarity,
             agg_similarity,
         }
     }
 }
 
+// ── Graph types ───────────────────────────────────────────────────────────────
+
+new_key_type! { pub struct NodeKey; }
+
 #[derive(Debug, Clone)]
 pub struct Edge {
-    pub target: u32,
+    pub target: NodeKey,
     pub correlation: StructuralCorrelation,
 }
 
-pub struct StructuralCorrelationGraph<M> {
-    model: EmbeddingModel,
-    /// ticker -> node id
-    entries: HashMap<String, u32>,
-
-    /// node id -> ticker
-    reverse: Vec<String>,
-
-    /// node id -> market
-    markets: Vec<M>,
-
-    /// adjacency list
-    graph: Vec<Vec<Edge>>,
-
-    _phanton: std::marker::PhantomData<M>,
+/// Bundles metadata and adjacency together so they can never get out of sync.
+#[derive(Debug)]
+struct Node<M> {
+    data: M,
+    edges: Vec<Edge>,
 }
 
-impl<M> StructuralCorrelationGraph<M>
-where
-    M: Metadata,
-{
+// ── Graph ─────────────────────────────────────────────────────────────────────
+
+#[derive(Debug)]
+pub struct StructuralCorrelationGraph<M> {
+    entries: HashMap<String, NodeKey>, // ticker → stable key
+    nodes: SlotMap<NodeKey, Node<M>>,  // key → data + edges
+}
+
+impl<M: Metadata> StructuralCorrelationGraph<M> {
     pub fn new() -> Self {
         Self {
-            model: EmbeddingModel::try_new().expect("embedding model failed to init"),
             entries: HashMap::new(),
-            reverse: Vec::new(),
-            markets: Vec::new(),
-            graph: Vec::new(),
-            _phanton: std::marker::PhantomData,
+            nodes: SlotMap::with_key(),
         }
     }
 
     pub fn insert(&mut self, entry: M) {
-        let ticker = entry.ticker().to_string();
-
-        if self.entries.contains_key(&ticker) {
+        if self.entries.contains_key(entry.id()) {
             return;
         }
 
-        let new_id = self.graph.len() as u32;
+        let ticker = entry.id().to_string();
 
-        // compute correlations BEFORE moving entry
-        let mut edges = Vec::new();
+        // Collect (key, correlation) pairs before inserting — lets us hold
+        // &self.nodes and &mut self.model simultaneously without a borrow conflict.
+        let edge_data: Vec<(NodeKey, StructuralCorrelation)> = self
+            .nodes
+            .iter()
+            .map(|(key, node)| {
+                let corr = StructuralCorrelation::compute(&entry, &node.data);
+                (key, corr)
+            })
+            .collect();
 
-        for (other_id, other_market) in self.markets.iter().enumerate() {
-            let correlation = StructuralCorrelation::compute(&mut self.model, &entry, other_market);
+        // Insert with empty edges; we'll populate them right after.
+        let key = self.nodes.insert(Node {
+            data: entry,
+            edges: vec![],
+        });
 
-            edges.push(Edge {
-                target: other_id as u32,
-                correlation: correlation.clone(),
-            });
+        // Wire forward edges from the new node and back-edges from each neighbor.
+        // Both operations are safe now that `key` is known.
+        let forward: Vec<Edge> = edge_data
+            .iter()
+            .map(|&(target, correlation)| {
+                self.nodes[target].edges.push(Edge {
+                    target: key,
+                    correlation,
+                });
+                Edge {
+                    target,
+                    correlation,
+                }
+            })
+            .collect();
 
-            self.graph[other_id].push(Edge {
-                target: new_id,
-                correlation,
-            });
+        self.nodes[key].edges = forward;
+        self.entries.insert(ticker, key);
+    }
+
+    pub fn remove(&mut self, ticker: &str) {
+        let Some(key) = self.entries.remove(ticker) else {
+            return;
+        };
+
+        // Collect neighbors before mutating so we don't borrow `nodes` twice.
+        let neighbors: Vec<NodeKey> = self.nodes[key].edges.iter().map(|e| e.target).collect();
+
+        for neighbor in neighbors {
+            if let Some(node) = self.nodes.get_mut(neighbor) {
+                node.edges.retain(|e| e.target != key);
+            }
         }
 
-        self.entries.insert(ticker.clone(), new_id);
-        self.reverse.push(ticker);
-        self.markets.push(entry);
-        self.graph.push(edges);
+        // Drops both data and edges atomically — nothing left to clean up.
+        self.nodes.remove(key);
     }
 
     pub fn similarities(&self, ticker: &str) -> Option<Vec<(&str, &StructuralCorrelation)>> {
-        let id = *self.entries.get(ticker)?;
-
-        let edges = &self.graph[id as usize];
+        let key = *self.entries.get(ticker)?;
 
         Some(
-            edges
+            self.nodes[key]
+                .edges
                 .iter()
-                .map(|edge| {
-                    (
-                        self.reverse[edge.target as usize].as_str(),
-                        &edge.correlation,
-                    )
+                .filter_map(|edge| {
+                    let node = self.nodes.get(edge.target)?;
+                    Some((node.data.id(), &edge.correlation))
                 })
                 .collect(),
         )
@@ -128,31 +160,30 @@ where
     pub async fn run(&mut self, rx: &mut Receiver<MetadataTransportMsg<M>>) {
         while let Some(msg) = rx.recv().await {
             match msg {
-                MetadataTransportMsg::Insert(metadata) => self.insert(metadata),
-                MetadataTransportMsg::Remove(key) => {
-                    tracing::info!("GLOBAL: request to remove {key}")
+                MetadataTransportMsg::Insert(m) => self.insert(m),
+                MetadataTransportMsg::Update(m) => {
+                    // Remove old entry and reinsert — edges recomputed fresh.
+                    self.remove(m.id());
+                    self.insert(m);
                 }
+                MetadataTransportMsg::Remove(key) => self.remove(&key),
             }
 
-            tracing::info!("{:#?}", self.graph);
+            tracing::info!("{:#?}", self.entries.keys())
         }
-
-        tracing::info!("market matcher exiting")
     }
 }
 
-pub enum MetadataTransportMsg<M> {
-    Insert(M),
+// ── Transport ─────────────────────────────────────────────────────────────────
+
+pub enum MetadataTransportMsg<O> {
+    Insert(O),
+    Update(O),
     Remove(String),
 }
 
-impl<M> From<M> for MetadataTransportMsg<M>
-where
-    M: Metadata,
-{
+impl<M: Metadata> From<M> for MetadataTransportMsg<M> {
     fn from(value: M) -> Self {
         Self::Insert(value)
     }
 }
-
-// ["btc5m" -> []]

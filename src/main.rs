@@ -9,16 +9,16 @@ use crate::{
         messages::Subscriptions,
         parser::GeminiParser,
         poll::{MetaDataRepo, SubscriptionManager},
-        responses::BinaryPredictionMarket,
         router::GeminiRouter,
+        types::BinaryPredictionMarket,
     },
     session::{Payload, Request, SessionManager},
     stats::matcher::{MetadataTransportMsg, StructuralCorrelationGraph},
 };
 
 mod bookkeeper;
-mod common;
 mod gemini;
+mod metadata;
 mod session;
 mod stats;
 mod traits;
@@ -44,7 +44,6 @@ async fn main() -> Result<()> {
     // the type on Request should be something like enum GeminiSend
     // which carries every possible type that can be sent via gemini ws
     let (request_tx, request_rx) = tokio::sync::mpsc::channel::<Payload<Subscriptions>>(32);
-    let order_tx = request_tx.clone();
     let (resub_tx, resub_rx) = tokio::sync::mpsc::channel::<String>(32);
     let (market_metadata_tx, mut market_metadata_rx) =
         tokio::sync::mpsc::channel::<MetadataTransportMsg<BinaryPredictionMarket>>(32);
