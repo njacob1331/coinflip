@@ -15,16 +15,6 @@ impl BinaryPredictionMarket {
     pub fn new(event: Arc<Event>, contract: Contract) -> Self {
         Self { event, contract }
     }
-
-    pub fn timeframe(&self) -> TimeFrame {
-        let start = self.event.start_time;
-        let end = self.event.expiry_date;
-
-        match start {
-            Some(start) => TimeFrame::Discrete { start, end },
-            None => TimeFrame::ExpiresAt { end },
-        }
-    }
 }
 
 impl Metadata for BinaryPredictionMarket {
@@ -42,6 +32,12 @@ impl Metadata for BinaryPredictionMarket {
     }
 
     fn timeframe(&self) -> TimeFrame {
-        self.timeframe()
+        let start = self.event.start_time;
+        let end = self.event.expiry_date;
+
+        match start {
+            Some(start) => TimeFrame::Discrete { start, end },
+            None => TimeFrame::ExpiresAt { end },
+        }
     }
 }
