@@ -15,14 +15,11 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
-// this is priority one
-// need to solve for the following:
-// 1. maintain an accurate list of subscriptions
-// 2. ensure event metadata is up to date
-// 3. be able to map contracts to events
-//
-// the parent event id is embedded in the contract id
-// the contractStatus stream will tell us when new events/contracts are created and when the strike changes
+// need to implement a seeding mechanism
+// this serves both as the inital seed as well as
+// a recovery mechanism when the websocket resets
+// it should revalidate its current state cascade any changes to the
+// appropriate consumers
 
 use crate::{
     gemini::{
