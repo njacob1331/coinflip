@@ -17,6 +17,7 @@ use crate::{
 };
 
 mod bookkeeper;
+mod common;
 mod gemini;
 mod metadata;
 mod session;
