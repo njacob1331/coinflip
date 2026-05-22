@@ -141,7 +141,6 @@ where
     }
 
     fn update_books(&mut self, update: T) {
-        // Handle corrupted symbols
         if self.corrupted.contains(update.key()) {
             if update.is_snapshot() {
                 self.handle_snapshot(update);
@@ -150,13 +149,10 @@ where
             return;
         }
 
-        // Fast path: existing book
-        if let Some(&idx) = self.index.get(update.key()) {
-            self.handle_update(idx as usize, update);
-            return;
+        match self.index.get(update.key()) {
+            Some(&index) => self.handle_update(index as usize, update),
+            None => self.handle_new(update),
         }
-
-        self.handle_new(update);
     }
 
     pub async fn run(
