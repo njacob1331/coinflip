@@ -225,3 +225,37 @@ impl ContractStatus {
         self.previous_status == self.new_status
     }
 }
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct PositionUpdate {
+    #[serde(rename = "e")]
+    pub event_type: String,
+    #[serde(rename = "E")]
+    pub event_ts: u64,
+    #[serde(rename = "u")]
+    pub account_update_ts: u64,
+    #[serde(rename = "A")]
+    pub account_id: u64,
+    #[serde(rename = "P")]
+    pub positions: Vec<Position>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct Position {
+    #[serde(rename = "t")]
+    pub product_type: String,
+    #[serde(rename = "s")]
+    pub instrument_symbol: String,
+    #[serde(rename = "a")]
+    pub amount: Vec<Amount>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct Amount {
+    #[serde(rename = "t")]
+    pub label: String,
+    #[serde(rename = "v")]
+    pub size: String,
+    #[serde(rename = "c")]
+    pub asset_code: Option<String>,
+}
