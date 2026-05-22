@@ -4,13 +4,23 @@ use crate::{
     session::{Payload, Priority, Request},
     traits::{OrderbookData, Prioritize},
 };
+use serde::Deserializer;
+use std::sync::Arc;
+
+pub fn deserialize_arc_str<'de, D>(deserializer: D) -> Result<Arc<str>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    Ok(Arc::from(s))
+}
 
 #[derive(Debug)]
 pub enum Stream {
-    BookTicker(String),
-    PartialDepth(String),
-    DifferentialDepth(String),
-    Trade(String),
+    BookTicker(Arc<str>),
+    PartialDepth(Arc<str>),
+    DifferentialDepth(Arc<str>),
+    Trade(Arc<str>),
     Order,
     Balance,
     ContractStatus,
@@ -307,7 +317,8 @@ pub struct ContractStatus {
     #[serde(rename = "k")]
     pub event_ticker: String,
     #[serde(rename = "s")]
-    pub symbol: String,
+    #[serde(deserialize_with = "deserialize_arc_str")]
+    pub symbol: Arc<str>,
     #[serde(rename = "p")]
     pub strike: Option<String>,
     #[serde(rename = "o")]

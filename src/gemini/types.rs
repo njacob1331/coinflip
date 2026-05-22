@@ -15,6 +15,10 @@ impl BinaryPredictionMarket {
     pub fn new(event: Arc<Event>, contract: Contract) -> Self {
         Self { event, contract }
     }
+
+    pub fn contract_id(&self) -> Arc<str> {
+        self.contract.instrument_symbol.clone()
+    }
 }
 
 impl Metadata for BinaryPredictionMarket {

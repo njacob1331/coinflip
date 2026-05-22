@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer};
 
@@ -106,7 +108,7 @@ pub struct Contract {
     // pub ticker: String,
     #[serde(rename = "instrumentSymbol")]
     #[serde(deserialize_with = "lowercase")]
-    pub instrument_symbol: String,
+    pub instrument_symbol: Arc<str>,
     // #[serde(rename = "effectiveDate")]
     // pub effective_date: Option<DateTime<Utc>>,
     // #[serde(rename = "marketState")]
@@ -132,13 +134,14 @@ pub struct Strike {
     pub available_at: Option<DateTime<Utc>>,
 }
 
-fn lowercase<'de, D>(deserializer: D) -> Result<String, D::Error>
+fn lowercase<'de, D>(deserializer: D) -> Result<Arc<str>, D::Error>
 where
     D: Deserializer<'de>,
 {
     // we need to optimize this
     let s = String::deserialize(deserializer)?;
-    Ok(s.to_lowercase())
+
+    Ok(Arc::from(s.to_lowercase()))
 }
 
 fn string_to_u32<'de, D>(deserializer: D) -> Result<u32, D::Error>

@@ -35,7 +35,7 @@ use crate::{
 
 pub struct MetaDataRepo {
     client: Arc<GeminiClient>,
-    metadata: HashSet<String>,
+    metadata: HashSet<Arc<str>>,
     metadata_tx: Sender<MetadataTransportMsg<BinaryPredictionMarket>>,
 }
 
@@ -62,7 +62,7 @@ impl MetaDataRepo {
 
         for contract in contracts {
             let bp_market = BinaryPredictionMarket::new(event.clone(), contract);
-            self.metadata.insert(bp_market.id().to_string());
+            self.metadata.insert(bp_market.contract_id());
             self.metadata_tx.send(bp_market.into()).await?;
         }
 
@@ -100,7 +100,7 @@ impl MetaDataRepo {
 pub struct SubscriptionManager {
     request_tx: Sender<Payload<Subscriptions>>,
     resub_rx: Receiver<String>,
-    subscriptions: HashSet<String>,
+    subscriptions: HashSet<Arc<str>>,
     orderbooks: Arc<DashMap<String, GeminiOrderbook>>,
 }
 
@@ -125,21 +125,21 @@ impl SubscriptionManager {
         Ok(())
     }
 
-    async fn subscribe(&mut self, symbol: String) -> Result<()> {
+    async fn subscribe(&mut self, symbol: Arc<str>) -> Result<()> {
         let payload = Subscriptions::Subscribe(Stream::DifferentialDepth(symbol));
         self.request_tx.send(payload.into()).await?;
 
         Ok(())
     }
 
-    async fn unsubscribe(&mut self, symbol: String) -> Result<()> {
+    async fn unsubscribe(&mut self, symbol: Arc<str>) -> Result<()> {
         let payload = Subscriptions::Unsubscribe(Stream::DifferentialDepth(symbol));
         self.request_tx.send(payload.into()).await?;
 
         Ok(())
     }
 
-    async fn resubscribe(&mut self, symbol: String) -> Result<()> {
+    async fn resubscribe(&mut self, symbol: Arc<str>) -> Result<()> {
         let payload = vec![
             Subscriptions::Unsubscribe(Stream::DifferentialDepth(symbol.clone())),
             Subscriptions::Subscribe(Stream::DifferentialDepth(symbol)),
@@ -158,7 +158,6 @@ impl SubscriptionManager {
                     &msg.symbol
                 );
                 self.subscriptions.remove(&msg.symbol);
-                self.orderbooks.remove(&msg.symbol);
                 self.unsubscribe(msg.symbol.clone()).await?
             }
 
@@ -195,7 +194,7 @@ impl SubscriptionManager {
                 resub = self.resub_rx.recv() => {
                     match resub {
                         Some(symbol) => {
-                            let _ = self.resubscribe(symbol).await;
+                            // let _ = self.resubscribe(symbol).await;
                         }
 
                         None => break
