@@ -93,6 +93,102 @@ impl Serialize for Subscriptions {
     }
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum OrderSide {
+    Buy,
+    Sell,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum OrderType {
+    Limit,
+    Market,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum TimeInForce {
+    Gtc,
+    Ioc,
+    Fok,
+    Moc,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum PredictionMarketOutcome {
+    Yes,
+    No,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlaceOrder {
+    client_order_id: String,
+    symbol: String,
+    side: OrderSide,
+    #[serde(rename = "type")]
+    kind: OrderType,
+    time_in_force: TimeInForce,
+    price: String,
+    quantity: String,
+    event_outcome: PredictionMarketOutcome,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CancelOrder {
+    order_id: String,
+}
+
+#[derive(Debug)]
+pub enum Order {
+    Place(PlaceOrder),
+    Cancel(CancelOrder),
+    // need to add the batch cancel variants
+    // CancelAll,
+    // CancelSession,
+}
+
+impl Serialize for Order {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        #[derive(Serialize)]
+        struct PlaceOrderMessage<'a> {
+            id: &'a str,
+            method: &'a str,
+            params: &'a PlaceOrder,
+        }
+
+        #[derive(Serialize)]
+        struct CancelOrderMessage<'a> {
+            id: &'a str,
+            method: &'a str,
+            params: &'a CancelOrder,
+        }
+
+        match self {
+            Order::Place(order) => PlaceOrderMessage {
+                id: &order.client_order_id,
+                method: "order.place",
+                params: order,
+            }
+            .serialize(serializer),
+            Order::Cancel(cancel) => CancelOrderMessage {
+                id: &cancel.order_id,
+                method: "order.cancel",
+                params: cancel,
+            }
+            .serialize(serializer),
+            // need to add the batch cancel variants
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Message {
     ContractStatus(ContractStatus),
@@ -160,7 +256,7 @@ pub struct PriceLevel {
     pub qty: i32,
 }
 
-#[inline(always)]
+#[inline]
 fn deserialize_gemini_prediction_market_qty<'de, D>(deserializer: D) -> Result<i32, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -172,7 +268,7 @@ where
     Ok(value)
 }
 
-#[inline(always)]
+#[inline]
 fn deserialize_gemini_prediction_market_price<'de, D>(deserializer: D) -> Result<u8, D::Error>
 where
     D: serde::Deserializer<'de>,
