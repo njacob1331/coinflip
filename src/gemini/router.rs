@@ -65,6 +65,7 @@ impl GeminiRouter {
 }
 
 impl Router<Message> for GeminiRouter {
+    #[inline]
     async fn route(&self, msg: Message) -> anyhow::Result<()> {
         match msg {
             Message::L2DifferentialDepth(update) => self.orderbook_tx.send(update).await?,

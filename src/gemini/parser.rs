@@ -23,6 +23,7 @@ impl<'f> GeminiParser<'f> {
 }
 
 impl<'f> Parser<Message> for GeminiParser<'f> {
+    #[inline]
     fn parse(&self, bytes: &[u8]) -> anyhow::Result<Message> {
         if self.depth_finder.find(bytes).is_some() {
             return Ok(Message::L2DifferentialDepth(sonic_rs::from_slice(bytes)?));
