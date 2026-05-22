@@ -29,18 +29,6 @@ impl Prioritize for Subscriptions {
     }
 }
 
-impl From<Subscriptions> for Payload<Subscriptions> {
-    fn from(value: Subscriptions) -> Self {
-        Payload::Single(value)
-    }
-}
-
-impl From<Vec<Subscriptions>> for Payload<Subscriptions> {
-    fn from(value: Vec<Subscriptions>) -> Self {
-        Payload::Batch(value)
-    }
-}
-
 impl Serialize for Subscriptions {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where

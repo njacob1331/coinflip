@@ -1,6 +1,4 @@
 use std::sync::Arc;
-
-use async_trait::async_trait;
 use tokio::sync::mpsc::{Receiver, Sender, channel};
 
 use crate::{
@@ -66,7 +64,6 @@ impl GeminiRouter {
     }
 }
 
-// #[async_trait]
 impl Router<Message> for GeminiRouter {
     async fn route(&self, msg: Message) -> anyhow::Result<()> {
         match msg {

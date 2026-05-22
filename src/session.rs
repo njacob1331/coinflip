@@ -21,6 +21,18 @@ pub enum Payload<T> {
     Batch(Vec<T>),
 }
 
+impl<T> From<T> for Payload<T> {
+    fn from(value: T) -> Self {
+        Payload::Single(value)
+    }
+}
+
+impl<T> From<Vec<T>> for Payload<T> {
+    fn from(value: Vec<T>) -> Self {
+        Payload::Batch(value)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Priority {
     Low,
