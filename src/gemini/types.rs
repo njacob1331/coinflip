@@ -1,7 +1,11 @@
 use std::sync::Arc;
 
 use crate::{
-    gemini::responses::{Contract, Event},
+    common::OrderbookUpdate,
+    gemini::{
+        messages::L2DifferentialDepth,
+        responses::{Contract, Event},
+    },
     metadata::{Category, TimeFrame},
     traits::Metadata,
 };
@@ -42,6 +46,24 @@ impl Metadata for BinaryPredictionMarket {
         match start {
             Some(start) => TimeFrame::Discrete { start, end },
             None => TimeFrame::ExpiresAt { end },
+        }
+    }
+}
+
+impl From<L2DifferentialDepth>
+    for OrderbookUpdate<String, L2DifferentialDepth, L2DifferentialDepth>
+{
+    fn from(value: L2DifferentialDepth) -> Self {
+        if value.first_update_id == value.last_update_id {
+            return OrderbookUpdate::Snapshot {
+                key: value.symbol.clone(),
+                data: value,
+            };
+        }
+
+        OrderbookUpdate::Diff {
+            key: value.symbol.clone(),
+            data: value,
         }
     }
 }
