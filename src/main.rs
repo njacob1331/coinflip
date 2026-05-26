@@ -6,7 +6,8 @@ use crate::{
     bookkeeper::BookKeeper,
     gemini::{
         client::GeminiClient,
-        messages::Subscriptions,
+        messages::{L2DifferentialDepth, Subscriptions},
+        orderbook::GeminiOrderbook,
         parser::GeminiParser,
         poll::{MetaDataRepo, SubscriptionManager},
         router::GeminiRouter,
@@ -45,7 +46,7 @@ async fn main() -> Result<()> {
     // the type on Request should be something like enum GeminiSend
     // which carries every possible type that can be sent via gemini ws
     let (request_tx, request_rx) = tokio::sync::mpsc::channel::<Payload<Subscriptions>>(32);
-    let (resub_tx, resub_rx) = tokio::sync::mpsc::channel::<String>(32);
+    let (resub_tx, resub_rx) = tokio::sync::mpsc::channel::<Arc<str>>(32);
     let (market_metadata_tx, mut market_metadata_rx) =
         tokio::sync::mpsc::channel::<MetadataTransportMsg<BinaryPredictionMarket>>(32);
 
@@ -57,11 +58,14 @@ async fn main() -> Result<()> {
     let mut contract_status_rx = router.contract_status_rx();
     let contract_metadata_rx = router.contract_metadata_rx();
 
-    let mut bookeeper = BookKeeper::new(resub_tx);
+    let mut bookeeper =
+        BookKeeper::<Arc<str>, GeminiOrderbook, L2DifferentialDepth, L2DifferentialDepth>::new(
+            resub_tx,
+        );
     let client = Arc::new(GeminiClient::new());
     let mut session_manager = SessionManager::new();
     let connection_listener = session_manager.connection_listener();
-    let mut sub_manager = SubscriptionManager::new(request_tx, resub_rx, bookeeper.orderbooks());
+    let mut sub_manager = SubscriptionManager::new(request_tx, resub_rx);
 
     let matcher_task = tokio::spawn(async move {
         let mut matcher = StructuralCorrelationGraph::new();

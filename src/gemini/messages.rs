@@ -11,7 +11,7 @@ pub fn deserialize_arc_str<'de, D>(deserializer: D) -> Result<Arc<str>, D::Error
 where
     D: Deserializer<'de>,
 {
-    let s = String::deserialize(deserializer)?;
+    let s = <&str>::deserialize(deserializer)?;
     Ok(Arc::from(s))
 }
 
@@ -229,7 +229,8 @@ pub struct L2DifferentialDepth {
     // #[serde(rename = "E")]
     // pub event_time_ns: u64,
     #[serde(rename = "s")]
-    pub symbol: String,
+    #[serde(deserialize_with = "deserialize_arc_str")]
+    pub symbol: Arc<str>,
 
     #[serde(rename = "U")]
     pub first_update_id: u64,
@@ -249,8 +250,8 @@ impl OrderbookData for L2DifferentialDepth {
         &self.symbol
     }
 
-    fn take_key(&mut self) -> String {
-        std::mem::take(&mut self.symbol)
+    fn take_key(&mut self) -> Arc<str> {
+        self.symbol.clone()
     }
 
     fn is_snapshot(&self) -> bool {

@@ -99,21 +99,15 @@ impl MetaDataRepo {
 
 pub struct SubscriptionManager {
     request_tx: Sender<Payload<Subscriptions>>,
-    resub_rx: Receiver<String>,
+    resub_rx: Receiver<Arc<str>>,
     subscriptions: HashSet<Arc<str>>,
-    orderbooks: Arc<DashMap<String, GeminiOrderbook>>,
 }
 
 impl SubscriptionManager {
-    pub fn new(
-        request_tx: Sender<Payload<Subscriptions>>,
-        resub_rx: Receiver<String>,
-        orderbooks: Arc<DashMap<String, GeminiOrderbook>>,
-    ) -> Self {
+    pub fn new(request_tx: Sender<Payload<Subscriptions>>, resub_rx: Receiver<Arc<str>>) -> Self {
         Self {
             request_tx,
             resub_rx,
-            orderbooks,
             subscriptions: HashSet::new(),
         }
     }
@@ -194,7 +188,7 @@ impl SubscriptionManager {
                 resub = self.resub_rx.recv() => {
                     match resub {
                         Some(symbol) => {
-                            // let _ = self.resubscribe(symbol).await;
+                            let _ = self.resubscribe(symbol).await;
                         }
 
                         None => break

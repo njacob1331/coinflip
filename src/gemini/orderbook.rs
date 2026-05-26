@@ -1,4 +1,4 @@
-use crate::{gemini::messages::L2DifferentialDepth, traits::OrderBook};
+use crate::{common::OrderbookSequence, gemini::messages::L2DifferentialDepth, traits::OrderBook};
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone)]
@@ -8,7 +8,7 @@ pub struct GeminiOrderbook {
     pub last_update_id: u64,
 }
 
-impl OrderBook<L2DifferentialDepth> for GeminiOrderbook {
+impl OrderBook<L2DifferentialDepth, L2DifferentialDepth> for GeminiOrderbook {
     fn from_snapshot(snapshot: L2DifferentialDepth) -> Self {
         Self {
             bids: snapshot
@@ -25,11 +25,9 @@ impl OrderBook<L2DifferentialDepth> for GeminiOrderbook {
         }
     }
 
-    fn valid_sequence(&self, update: &L2DifferentialDepth) -> bool {
-        if self.last_update_id == 0 {
-            return true;
-        }
-        update.first_update_id == self.last_update_id
+    fn sequence(&self, update: &L2DifferentialDepth) -> OrderbookSequence {
+        // need to implement logic
+        OrderbookSequence::Valid
     }
 
     fn corrupted(&self, update: L2DifferentialDepth) -> bool {

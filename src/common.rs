@@ -1,3 +1,7 @@
+use std::sync::Arc;
+
+pub type SharedStr = Arc<str>;
+
 #[derive(Debug)]
 pub enum OrderbookUpdate<K, S, D> {
     Snapshot { key: K, data: S },
@@ -9,7 +13,7 @@ impl<K, S, D> OrderbookUpdate<K, S, D>
 where
     K: Clone,
 {
-    fn key(&self) -> &K {
+    pub fn key(&self) -> &K {
         match self {
             Self::Snapshot { key, .. } => key,
             Self::Diff { key, .. } => key,
@@ -17,11 +21,17 @@ where
         }
     }
 
-    fn take_key(&self) -> K {
+    pub fn take_key(&self) -> K {
         match self {
             Self::Snapshot { key, .. } => key.clone(),
             Self::Diff { key, .. } => key.clone(),
             Self::Terminal(key) => key.clone(),
         }
     }
+}
+
+pub enum OrderbookSequence {
+    Valid,
+    Stale,
+    Gap,
 }

@@ -169,7 +169,7 @@ impl<M: Metadata> StructuralCorrelationGraph<M> {
                 MetadataTransportMsg::Remove(key) => self.remove(&key),
             }
 
-            tracing::info!("{:#?}", self.entries.keys())
+            // tracing::info!("{:#?}", self.entries.keys())
         }
     }
 }

@@ -2,6 +2,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc::{Receiver, Sender, channel};
 
 use crate::{
+    common::OrderbookUpdate,
     gemini::messages::{
         BalanceUpdate, ContractStatus, L2DifferentialDepth, Message, SubscriptionError,
     },
@@ -9,8 +10,9 @@ use crate::{
 };
 
 pub struct GeminiRouter {
-    orderbook_tx: Sender<L2DifferentialDepth>,
-    orderbook_rx: Option<Receiver<L2DifferentialDepth>>,
+    orderbook_tx: Sender<OrderbookUpdate<Arc<str>, L2DifferentialDepth, L2DifferentialDepth>>,
+    orderbook_rx:
+        Option<Receiver<OrderbookUpdate<Arc<str>, L2DifferentialDepth, L2DifferentialDepth>>>,
     balance_tx: Sender<BalanceUpdate>,
     balance_rx: Option<Receiver<BalanceUpdate>>,
     subscription_err_tx: Sender<SubscriptionError>,
@@ -43,7 +45,9 @@ impl GeminiRouter {
         }
     }
 
-    pub fn orderbook_rx(&mut self) -> Receiver<L2DifferentialDepth> {
+    pub fn orderbook_rx(
+        &mut self,
+    ) -> Receiver<OrderbookUpdate<Arc<str>, L2DifferentialDepth, L2DifferentialDepth>> {
         self.orderbook_rx.take().unwrap()
     }
 
@@ -68,11 +72,19 @@ impl Router<Message> for GeminiRouter {
     #[inline]
     async fn route(&self, msg: Message) -> anyhow::Result<()> {
         match msg {
-            Message::L2DifferentialDepth(update) => self.orderbook_tx.send(update).await?,
+            Message::L2DifferentialDepth(update) => {
+                tracing::info!("{update:#?}");
+                self.orderbook_tx.send(update.into()).await?
+            }
             Message::BalanceUpdate(update) => self.balance_tx.send(update).await?,
             Message::SubscriptionError(error) => self.subscription_err_tx.send(error).await?,
             Message::ContractStatus(status) => {
                 let status = Arc::new(status);
+                if status.new_status == "Settled" {
+                    self.orderbook_tx
+                        .send(OrderbookUpdate::Terminal(status.symbol.clone()))
+                        .await?;
+                }
                 self.contract_status_tx.send(status.clone()).await?;
                 self.contract_metadata_tx.send(status).await?
             }

@@ -2,9 +2,10 @@ use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
-use std::future::Future;
+use std::{future::Future, sync::Arc};
 
 use crate::{
+    common::OrderbookSequence,
     metadata::{Category, TimeFrame},
     session::Priority,
 };
@@ -35,23 +36,20 @@ pub trait Prioritize {
     fn priority(&self) -> Priority;
 }
 
-pub trait OrderBook<T>
-where
-    T: OrderbookData,
-{
-    fn from_snapshot(snapshot: T) -> Self;
-    fn update(&mut self, update: T);
+pub trait OrderBook<S, D> {
+    fn from_snapshot(snapshot: S) -> Self;
+    fn update(&mut self, update: D);
     // fn bid(&self) -> Option<Decimal>;
     // fn ask(&self) -> Option<Decimal>;
     // fn mid(&self) -> Option<Decimal>;
     // fn spread(&self) -> Option<Decimal>;
-    fn valid_sequence(&self, update: &T) -> bool;
-    fn corrupted(&self, update: T) -> bool;
+    fn sequence(&self, update: &D) -> OrderbookSequence;
+    fn corrupted(&self, update: S) -> bool;
 }
 
 pub trait OrderbookData {
     fn key(&self) -> &str;
-    fn take_key(&mut self) -> String;
+    fn take_key(&mut self) -> Arc<str>;
     fn is_snapshot(&self) -> bool;
 }
 
