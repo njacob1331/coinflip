@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize, Serializer};
 use crate::{
     common::SharedStr,
     session::{Payload, Priority, Request},
-    traits::{OrderbookData, Prioritize},
+    traits::Prioritize,
 };
 use serde::Deserializer;
 use std::sync::Arc;
@@ -244,20 +244,6 @@ pub struct L2DifferentialDepth {
 
     #[serde(rename = "a")]
     pub asks: Vec<PriceLevel>,
-}
-
-impl OrderbookData for L2DifferentialDepth {
-    fn key(&self) -> &str {
-        &self.symbol
-    }
-
-    fn take_key(&mut self) -> SharedStr {
-        self.symbol.clone()
-    }
-
-    fn is_snapshot(&self) -> bool {
-        self.first_update_id == self.last_update_id
-    }
 }
 
 #[derive(Debug, Deserialize, Clone)]
