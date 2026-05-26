@@ -1,13 +1,14 @@
 use serde::{Deserialize, Serialize, Serializer};
 
 use crate::{
+    common::SharedStr,
     session::{Payload, Priority, Request},
     traits::{OrderbookData, Prioritize},
 };
 use serde::Deserializer;
 use std::sync::Arc;
 
-pub fn deserialize_arc_str<'de, D>(deserializer: D) -> Result<Arc<str>, D::Error>
+pub fn deserialize_arc_str<'de, D>(deserializer: D) -> Result<SharedStr, D::Error>
 where
     D: Deserializer<'de>,
 {
@@ -17,10 +18,10 @@ where
 
 #[derive(Debug)]
 pub enum Stream {
-    BookTicker(Arc<str>),
-    PartialDepth(Arc<str>),
-    DifferentialDepth(Arc<str>),
-    Trade(Arc<str>),
+    BookTicker(SharedStr),
+    PartialDepth(SharedStr),
+    DifferentialDepth(SharedStr),
+    Trade(SharedStr),
     Order,
     Balance,
     ContractStatus,
@@ -230,7 +231,7 @@ pub struct L2DifferentialDepth {
     // pub event_time_ns: u64,
     #[serde(rename = "s")]
     #[serde(deserialize_with = "deserialize_arc_str")]
-    pub symbol: Arc<str>,
+    pub symbol: SharedStr,
 
     #[serde(rename = "U")]
     pub first_update_id: u64,
@@ -250,7 +251,7 @@ impl OrderbookData for L2DifferentialDepth {
         &self.symbol
     }
 
-    fn take_key(&mut self) -> Arc<str> {
+    fn take_key(&mut self) -> SharedStr {
         self.symbol.clone()
     }
 
@@ -319,7 +320,7 @@ pub struct ContractStatus {
     pub event_ticker: String,
     #[serde(rename = "s")]
     #[serde(deserialize_with = "deserialize_arc_str")]
-    pub symbol: Arc<str>,
+    pub symbol: SharedStr,
     #[serde(rename = "p")]
     pub strike: Option<String>,
     #[serde(rename = "o")]

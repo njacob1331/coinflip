@@ -22,6 +22,7 @@ use tokio_util::sync::CancellationToken;
 // appropriate consumers
 
 use crate::{
+    common::SharedStr,
     gemini::{
         client::GeminiClient,
         messages::{ContractStatus, Stream, SubscriptionError, Subscriptions},
@@ -35,7 +36,7 @@ use crate::{
 
 pub struct MetaDataRepo {
     client: Arc<GeminiClient>,
-    metadata: HashSet<Arc<str>>,
+    metadata: HashSet<SharedStr>,
     metadata_tx: Sender<MetadataTransportMsg<BinaryPredictionMarket>>,
 }
 
@@ -99,12 +100,12 @@ impl MetaDataRepo {
 
 pub struct SubscriptionManager {
     request_tx: Sender<Payload<Subscriptions>>,
-    resub_rx: Receiver<Arc<str>>,
-    subscriptions: HashSet<Arc<str>>,
+    resub_rx: Receiver<SharedStr>,
+    subscriptions: HashSet<SharedStr>,
 }
 
 impl SubscriptionManager {
-    pub fn new(request_tx: Sender<Payload<Subscriptions>>, resub_rx: Receiver<Arc<str>>) -> Self {
+    pub fn new(request_tx: Sender<Payload<Subscriptions>>, resub_rx: Receiver<SharedStr>) -> Self {
         Self {
             request_tx,
             resub_rx,
@@ -119,21 +120,21 @@ impl SubscriptionManager {
         Ok(())
     }
 
-    async fn subscribe(&mut self, symbol: Arc<str>) -> Result<()> {
+    async fn subscribe(&mut self, symbol: SharedStr) -> Result<()> {
         let payload = Subscriptions::Subscribe(Stream::DifferentialDepth(symbol));
         self.request_tx.send(payload.into()).await?;
 
         Ok(())
     }
 
-    async fn unsubscribe(&mut self, symbol: Arc<str>) -> Result<()> {
+    async fn unsubscribe(&mut self, symbol: SharedStr) -> Result<()> {
         let payload = Subscriptions::Unsubscribe(Stream::DifferentialDepth(symbol));
         self.request_tx.send(payload.into()).await?;
 
         Ok(())
     }
 
-    async fn resubscribe(&mut self, symbol: Arc<str>) -> Result<()> {
+    async fn resubscribe(&mut self, symbol: SharedStr) -> Result<()> {
         let payload = vec![
             Subscriptions::Unsubscribe(Stream::DifferentialDepth(symbol.clone())),
             Subscriptions::Subscribe(Stream::DifferentialDepth(symbol)),
