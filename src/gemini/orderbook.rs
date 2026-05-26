@@ -26,12 +26,33 @@ impl OrderBook<L2DifferentialDepth, L2DifferentialDepth> for GeminiOrderbook {
     }
 
     fn sequence(&self, update: &L2DifferentialDepth) -> OrderbookSequence {
-        // need to implement logic
-        OrderbookSequence::Valid
+        let last = self.last_update_id;
+
+        // 1. Ignore outdated updates
+        if update.last_update_id <= last {
+            return OrderbookSequence::Stale;
+        }
+
+        // 2. First valid update after snapshot
+        //
+        // U <= lastUpdateId + 1 <= u
+        if update.first_update_id <= last + 1 && last + 1 <= update.last_update_id {
+            return OrderbookSequence::Valid;
+        }
+
+        // 3. Sequential update
+        //
+        // U == lastUpdateId + 1
+        if update.first_update_id == last + 1 {
+            return OrderbookSequence::Valid;
+        }
+
+        // 4. Gap → corruption → must resync
+        OrderbookSequence::Gap
     }
 
     fn corrupted(&self, update: L2DifferentialDepth) -> bool {
-        false
+        matches!(self.sequence(&update), OrderbookSequence::Gap)
     }
 
     fn update(&mut self, update: L2DifferentialDepth) {
