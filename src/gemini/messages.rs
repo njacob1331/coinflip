@@ -4,17 +4,10 @@ use crate::{
     common::SharedStr,
     session::{Payload, Priority, Request},
     traits::Prioritize,
+    utils::parsing::deserialize_sharedstr,
 };
 use serde::Deserializer;
 use std::sync::Arc;
-
-pub fn deserialize_arc_str<'de, D>(deserializer: D) -> Result<SharedStr, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let s = <&str>::deserialize(deserializer)?;
-    Ok(Arc::from(s))
-}
 
 #[derive(Debug)]
 pub enum Stream {
@@ -230,7 +223,7 @@ pub struct L2DifferentialDepth {
     // #[serde(rename = "E")]
     // pub event_time_ns: u64,
     #[serde(rename = "s")]
-    #[serde(deserialize_with = "deserialize_arc_str")]
+    #[serde(deserialize_with = "deserialize_sharedstr")]
     pub symbol: SharedStr,
 
     #[serde(rename = "U")]
@@ -305,7 +298,7 @@ pub struct ContractStatus {
     #[serde(rename = "k")]
     pub event_ticker: String,
     #[serde(rename = "s")]
-    #[serde(deserialize_with = "deserialize_arc_str")]
+    #[serde(deserialize_with = "deserialize_sharedstr")]
     pub symbol: SharedStr,
     #[serde(rename = "p")]
     pub strike: Option<String>,
