@@ -44,8 +44,10 @@ impl Ws {
                     Payload::Batch(payload) => {
                         for element in payload {
                             let json = sonic_rs::to_string(&element)?;
-                            writer.send(WsMessage::Text(json)).await?
+                            writer.feed(WsMessage::Text(json)).await?
                         }
+
+                        writer.flush().await?;
                     }
                 }
             }
