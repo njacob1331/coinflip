@@ -16,7 +16,7 @@ struct StructuralCorrelation {
 impl StructuralCorrelation {
     fn compare<S>(x: &S, y: &S) -> Option<f32>
     where
-        S: PartialEq + AsRef<str>,
+        S: PartialEq,
     {
         if x == y {
             return Some(1.0);
@@ -72,7 +72,10 @@ pub struct StructuralCorrelationGraph<M> {
     nodes: SlotMap<NodeKey, Node<M>>,  // key → data + edges
 }
 
-impl<M: Metadata> StructuralCorrelationGraph<M> {
+impl<M> StructuralCorrelationGraph<M>
+where
+    M: Metadata,
+{
     pub fn new() -> Self {
         Self {
             entries: HashMap::new(),
