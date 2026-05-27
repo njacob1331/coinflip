@@ -105,7 +105,7 @@ where
         M: Send + 'static,
     {
         let (writer, reader) = Ws::connect(url).await?;
-        let (session_tx, session_rx) = kanal::bounded_async::<Request<T>>(8);
+        let (session_tx, session_rx) = kanal::bounded_async::<Request<T>>(32);
 
         Ok(Self {
             session_tx,
