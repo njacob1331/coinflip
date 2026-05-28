@@ -20,8 +20,7 @@ pub struct BookKeeper<K, O, S, D> {
     corrupted: HashSet<K>,
     resub_tx: Sender<K>,
     index: HashMap<K, u32>,
-    reverse_index: Vec<K>,
-    books: Vec<O>,
+    data: Vec<O>,
     _phantom: std::marker::PhantomData<(S, D)>,
 }
 
@@ -37,30 +36,27 @@ where
             corrupted: HashSet::new(),
             resub_tx,
             index: HashMap::new(),
-            reverse_index: Vec::new(),
-            books: Vec::new(),
+            data: Vec::new(),
             _phantom: std::marker::PhantomData,
         }
     }
 
     fn reset_books(&mut self) {
         self.index.clear();
-        self.reverse_index.clear();
-        self.books.clear();
+        self.data.clear();
         self.corrupted.clear();
     }
 
-    fn handle_snapshot(&mut self, key: K, data: S) {
+    fn handle_snapshot(&mut self, key: K, snapshot: S) {
         tracing::info!("snapshot received for {}", key);
         self.corrupted.remove(&key);
 
-        let idx = self.books.len() as u32;
-        self.index.insert(key.clone(), idx);
-        self.reverse_index.push(key);
-        self.books.push(O::from_snapshot(data));
+        let idx = self.data.len() as u32;
+        self.index.insert(key, idx);
+        self.data.push(O::from_snapshot(snapshot));
     }
 
-    fn handle_diff(&mut self, key: K, data: D) {
+    fn handle_diff(&mut self, key: K, diff: D) {
         if self.corrupted.contains(&key) {
             // Drop diffs for corrupted books; wait for a snapshot
             return;
@@ -69,9 +65,9 @@ where
         match self.index.get(&key) {
             Some(&idx) => {
                 let idx = idx as usize;
-                let book = &mut self.books[idx];
-                match book.sequence(&data) {
-                    OrderbookSequence::Valid => book.update(data),
+                let book = &mut self.data[idx];
+                match book.sequence(&diff) {
+                    OrderbookSequence::Valid => book.update(diff),
                     OrderbookSequence::Stale => {}
                     OrderbookSequence::Gap => {
                         tracing::info!("gap detected for {}", key);
@@ -100,16 +96,14 @@ where
     /// Swap-remove a book at `idx`, keeping index/reverse_index consistent.
     fn remove_book(&mut self, idx: usize, key: &K) {
         self.index.remove(key);
-        let last = self.books.len() - 1;
+        let last = self.data.len() - 1;
+        
         if idx != last {
-            self.books.swap(idx, last);
-            self.reverse_index.swap(idx, last);
-            // The key that was at `last` is now at `idx` — update its index entry
-            let swapped_key = &self.reverse_index[idx];
-            self.index.insert(swapped_key.clone(), idx as u32);
+            self.data.swap(idx, last);
+            self.index.insert(key.clone(), idx as u32);
         }
-        self.books.pop();
-        self.reverse_index.pop();
+        
+        self.data.pop();
     }
 
     pub async fn run(
