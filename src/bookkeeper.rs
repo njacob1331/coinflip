@@ -17,7 +17,7 @@ use crate::{
 };
 
 pub struct BookKeeper<K, O, S, D> {
-    corrupted: HashSet<K>,
+    corrupted: HashMap<K, u32>,
     resub_tx: Sender<K>,
     index: HashMap<K, u32>,
     data: Vec<O>,
@@ -33,7 +33,7 @@ where
 {
     pub fn new(resub_tx: Sender<K>) -> Self {
         Self {
-            corrupted: HashSet::new(),
+            corrupted: HashMap::new(),
             resub_tx,
             index: HashMap::new(),
             data: Vec::new(),
@@ -49,7 +49,11 @@ where
 
     fn handle_snapshot(&mut self, key: K, snapshot: S) {
         tracing::info!("snapshot received for {}", key);
-        self.corrupted.remove(&key);
+        
+        if let Some(&idx) = self.corrupted.remove(&key) {
+            self.data[idx as usize] = O::from_snapshot(snapshot);
+            return;
+        }
 
         let idx = self.data.len() as u32;
         self.index.insert(key, idx);
@@ -57,7 +61,7 @@ where
     }
 
     fn handle_diff(&mut self, key: K, diff: D) {
-        if self.corrupted.contains(&key) {
+        if self.corrupted.contains_key(&key) {
             // Drop diffs for corrupted books; wait for a snapshot
             return;
         }
@@ -71,8 +75,7 @@ where
                     OrderbookSequence::Stale => {}
                     OrderbookSequence::Gap => {
                         tracing::info!("gap detected for {}", key);
-                        self.remove_book(idx, &key);
-                        self.corrupted.insert(key.clone());
+                        self.corrupted.insert(key.clone(), idx as u32);
                         let _ = self.resub_tx.try_send(key);
                     }
                 }
@@ -90,6 +93,7 @@ where
         if let Some(&idx) = self.index.get(&key) {
             self.remove_book(idx as usize, &key);
         }
+        
         self.corrupted.remove(&key);
     }
 
