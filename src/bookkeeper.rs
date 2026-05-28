@@ -30,6 +30,7 @@ where
     K: Clone + Eq + Hash + Display,
     O: OrderBook<S, D>,
     S: Debug,
+    D: Debug,
 {
     pub fn new(resub_tx: Sender<K>) -> Self {
         Self {
@@ -83,6 +84,7 @@ where
             None => {
                 // Diff arrived before snapshot — common on connect, just drop it
                 tracing::debug!("diff for unknown key {}, waiting for snapshot", key);
+                let _ = self.resub_tx.try_send(key);
             }
         }
     }

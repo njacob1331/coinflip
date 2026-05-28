@@ -11,8 +11,8 @@ use crate::{
 };
 
 pub struct BinaryPredictionMarket {
-    event: Arc<Event>,
-    contract: Contract,
+    pub event: Arc<Event>,
+    pub contract: Contract,
 }
 
 impl BinaryPredictionMarket {

@@ -72,10 +72,7 @@ impl Router<Message> for GeminiRouter {
     #[inline]
     async fn route(&self, msg: Message) -> anyhow::Result<()> {
         match msg {
-            Message::L2DifferentialDepth(update) => {
-                tracing::info!("{update:#?}");
-                self.orderbook_tx.send(update.into()).await?
-            }
+            Message::L2DifferentialDepth(update) => self.orderbook_tx.send(update.into()).await?,
             Message::BalanceUpdate(update) => self.balance_tx.send(update).await?,
             Message::SubscriptionError(error) => self.subscription_err_tx.send(error).await?,
             Message::ContractStatus(status) => {

@@ -22,9 +22,11 @@ mod bookkeeper;
 mod common;
 mod gemini;
 mod metadata;
+mod ontology;
 mod session;
 mod stats;
 mod traits;
+mod utils;
 mod ws;
 
 use tracing_subscriber::{EnvFilter, fmt};

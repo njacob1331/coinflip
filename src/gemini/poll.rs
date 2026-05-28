@@ -27,6 +27,7 @@ use crate::{
         client::GeminiClient,
         messages::{ContractStatus, Stream, SubscriptionError, Subscriptions},
         orderbook::GeminiOrderbook,
+        parser::TickerParser,
         types::BinaryPredictionMarket,
     },
     session::{Payload, Request},
@@ -35,6 +36,7 @@ use crate::{
 };
 
 pub struct MetaDataRepo {
+    parser: TickerParser,
     client: Arc<GeminiClient>,
     metadata: HashSet<SharedStr>,
     metadata_tx: Sender<MetadataTransportMsg<BinaryPredictionMarket>>,
@@ -46,6 +48,7 @@ impl MetaDataRepo {
         metadata_tx: Sender<MetadataTransportMsg<BinaryPredictionMarket>>,
     ) -> Self {
         Self {
+            parser: TickerParser::new(),
             client,
             metadata: HashSet::new(),
             metadata_tx,
@@ -63,6 +66,7 @@ impl MetaDataRepo {
 
         for contract in contracts {
             let bp_market = BinaryPredictionMarket::new(event.clone(), contract);
+            self.parser.parse(&bp_market);
             self.metadata.insert(bp_market.contract_id());
             self.metadata_tx.send(bp_market.into()).await?;
         }
@@ -189,6 +193,7 @@ impl SubscriptionManager {
                 resub = self.resub_rx.recv() => {
                     match resub {
                         Some(symbol) => {
+                            tracing::info!("GEMINI: resubbing to {symbol}");
                             let _ = self.resubscribe(symbol).await;
                         }
 

@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 anyhow = "1"
 
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["full", "tracing"] }
 tokio-util = "0.7"
 futures-util = "0.3"
 kanal = "0.1.1"
@@ -15,6 +15,7 @@ reqwest = { version = "0.12", features = ["json"] }
 tokio-tungstenite = { version = "0.20", features = ["native-tls"] }
 url = "*"
 
+regex = "1.12.3"
 chrono = { version = "0.4", features = ["now", "serde"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
