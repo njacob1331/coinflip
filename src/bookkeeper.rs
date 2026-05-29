@@ -20,6 +20,7 @@ pub struct BookKeeper<K, O, S, D> {
     corrupted: HashMap<K, u32>,
     resub_tx: Sender<K>,
     index: HashMap<K, u32>,
+    reverse: Vec<K>,
     data: Vec<O>,
     _phantom: std::marker::PhantomData<(S, D)>,
 }
@@ -36,6 +37,7 @@ where
             corrupted: HashMap::new(),
             resub_tx,
             index: HashMap::new(),
+            reverse: Vec::new(),
             data: Vec::new(),
             _phantom: std::marker::PhantomData,
         }
@@ -43,20 +45,22 @@ where
 
     fn reset_books(&mut self) {
         self.index.clear();
+        self.reverse.clear();
         self.data.clear();
         self.corrupted.clear();
     }
 
     fn handle_snapshot(&mut self, key: K, snapshot: S) {
         tracing::info!("snapshot received for {}", key);
-        
-        if let Some(&idx) = self.corrupted.remove(&key) {
+
+        if let Some(idx) = self.corrupted.remove(&key) {
             self.data[idx as usize] = O::from_snapshot(snapshot);
             return;
         }
 
         let idx = self.data.len() as u32;
-        self.index.insert(key, idx);
+        self.index.insert(key.clone(), idx);
+        self.reverse.push(key);
         self.data.push(O::from_snapshot(snapshot));
     }
 
@@ -90,24 +94,27 @@ where
 
     fn handle_terminal(&mut self, key: K) {
         tracing::info!("terminal received for {} - removing book", &key);
-        if let Some(&idx) = self.index.get(&key) {
-            self.remove_book(idx as usize, &key);
-        }
-        
+        self.remove_book(&key);
         self.corrupted.remove(&key);
     }
 
     /// Swap-remove a book at `idx`, keeping index/reverse_index consistent.
-    fn remove_book(&mut self, idx: usize, key: &K) {
-        self.index.remove(key);
-        let last = self.data.len() - 1;
-        
-        if idx != last {
-            self.data.swap(idx, last);
-            self.index.insert(key.clone(), idx as u32);
+    fn remove_book(&mut self, key: &K) {
+        if let Some(removed) = self.index.remove(key) {
+            let last = self.data.len() - 1;
+            let removed = removed as usize;
+
+            if removed != last {
+                self.data.swap(removed, last);
+                self.reverse.swap(removed, last);
+                self.index
+                    .insert(self.reverse[removed].clone(), removed as u32);
+            }
+
+            self.data.pop();
+            self.reverse.pop();
+            self.corrupted.remove(key);
         }
-        
-        self.data.pop();
     }
 
     pub async fn run(
