@@ -71,7 +71,7 @@ impl Ws {
                 match msg {
                     Ok(WsMessage::Text(text)) => match parser.parse(text.as_bytes()) {
                         Ok(msg) => {
-                            if let Err(e) = router.route(msg).await {
+                            if let Err(e) = router.route_sync(msg) {
                                 return Err(anyhow!("ws reader send error: {e}"));
                             }
                         }
@@ -79,7 +79,7 @@ impl Ws {
                     },
                     Ok(WsMessage::Binary(bytes)) => match parser.parse(&bytes) {
                         Ok(msg) => {
-                            if let Err(e) = router.route(msg).await {
+                            if let Err(e) = router.route_sync(msg) {
                                 return Err(anyhow!("ws reader send error: {e}"));
                             }
                         }
