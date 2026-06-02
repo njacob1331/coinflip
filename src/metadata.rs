@@ -3,13 +3,15 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer};
 
+use crate::common::SharedStr;
+
 pub enum ObservationType {
     Measurement,
     Outcome,
     Derivative,
     Forecast,
     // ex report released, touchdown scored, etc
-    Signal
+    Signal,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -21,7 +23,7 @@ pub enum TimeFrame {
     },
     OpenEnded {
         start: DateTime<Utc>,
-        est_end: Option<DateTime<Utc>>
+        est_end: Option<DateTime<Utc>>,
     },
     ExpiresAt {
         end: DateTime<Utc>,
@@ -39,6 +41,10 @@ pub enum Category {
     Commodities,
     Weather,
     Other(String),
+}
+
+pub struct CryptoMetadata {
+    asset: String,
 }
 
 impl AsRef<str> for Category {
@@ -74,4 +80,10 @@ impl<'de> Deserialize<'de> for Category {
             _ => Self::Other(normalized),
         })
     }
+}
+
+struct Metadata {
+    id: SharedStr,
+    category: Category,
+    subject: SharedStr,
 }

@@ -50,9 +50,7 @@ impl Metadata for BinaryPredictionMarket {
     }
 }
 
-impl From<L2DifferentialDepth>
-    for OrderbookUpdate<SharedStr, L2DifferentialDepth, L2DifferentialDepth>
-{
+impl From<L2DifferentialDepth> for OrderbookUpdate<L2DifferentialDepth, L2DifferentialDepth> {
     fn from(value: L2DifferentialDepth) -> Self {
         if value.first_update_id == value.last_update_id {
             return OrderbookUpdate::Snapshot {
@@ -68,7 +66,7 @@ impl From<L2DifferentialDepth>
     }
 }
 
-impl From<ContractStatus> for OrderbookUpdate<SharedStr, L2DifferentialDepth, L2DifferentialDepth> {
+impl From<ContractStatus> for OrderbookUpdate<L2DifferentialDepth, L2DifferentialDepth> {
     fn from(value: ContractStatus) -> Self {
         OrderbookUpdate::Terminal(value.symbol.clone())
     }

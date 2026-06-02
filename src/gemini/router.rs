@@ -10,9 +10,8 @@ use crate::{
 };
 
 pub struct GeminiRouter {
-    orderbook_tx: Sender<OrderbookUpdate<Arc<str>, L2DifferentialDepth, L2DifferentialDepth>>,
-    orderbook_rx:
-        Option<Receiver<OrderbookUpdate<Arc<str>, L2DifferentialDepth, L2DifferentialDepth>>>,
+    orderbook_tx: Sender<OrderbookUpdate<L2DifferentialDepth, L2DifferentialDepth>>,
+    orderbook_rx: Option<Receiver<OrderbookUpdate<L2DifferentialDepth, L2DifferentialDepth>>>,
     balance_tx: Sender<BalanceUpdate>,
     balance_rx: Option<Receiver<BalanceUpdate>>,
     subscription_err_tx: Sender<SubscriptionError>,
@@ -28,8 +27,8 @@ impl GeminiRouter {
         let (orderbook_tx, orderbook_rx) = channel(256);
         let (balance_tx, balance_rx) = channel(32);
         let (subscription_err_tx, subscription_err_rx) = channel(32);
-        let (contract_status_tx, contract_status_rx) = channel(32);
-        let (contract_metadata_tx, contract_metadata_rx) = channel(32);
+        let (contract_status_tx, contract_status_rx) = channel(128);
+        let (contract_metadata_tx, contract_metadata_rx) = channel(128);
 
         Self {
             orderbook_tx,
@@ -47,7 +46,7 @@ impl GeminiRouter {
 
     pub fn orderbook_rx(
         &mut self,
-    ) -> Receiver<OrderbookUpdate<Arc<str>, L2DifferentialDepth, L2DifferentialDepth>> {
+    ) -> Receiver<OrderbookUpdate<L2DifferentialDepth, L2DifferentialDepth>> {
         self.orderbook_rx.take().unwrap()
     }
 
@@ -84,6 +83,27 @@ impl Router<Message> for GeminiRouter {
                 }
                 self.contract_status_tx.send(status.clone()).await?;
                 self.contract_metadata_tx.send(status).await?
+            }
+            _ => {}
+        }
+
+        Ok(())
+    }
+
+    #[inline]
+    fn route_sync(&self, msg: Message) -> anyhow::Result<()> {
+        match msg {
+            Message::L2DifferentialDepth(update) => self.orderbook_tx.try_send(update.into())?,
+            Message::BalanceUpdate(update) => self.balance_tx.try_send(update)?,
+            Message::SubscriptionError(error) => self.subscription_err_tx.try_send(error)?,
+            Message::ContractStatus(status) => {
+                let status = Arc::new(status);
+                if status.new_status == "Settled" {
+                    self.orderbook_tx
+                        .try_send(OrderbookUpdate::Terminal(status.symbol.clone()))?;
+                }
+                self.contract_status_tx.try_send(status.clone())?;
+                self.contract_metadata_tx.try_send(status)?
             }
             _ => {}
         }

@@ -1,4 +1,5 @@
 // bookkeeper.rs
+use kanal::AsyncSender;
 use std::{
     collections::{HashMap, HashSet},
     fmt::{Debug, Display},
@@ -12,78 +13,94 @@ use tokio::sync::{
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    common::{OrderbookSequence, OrderbookUpdate},
+    common::{OrderbookSequence, OrderbookSnapshot, OrderbookUpdate, SharedStr},
+    data_structures::IndexedStore,
+    stats::TransportMsg,
     traits::OrderBook,
 };
 
-pub struct BookKeeper<K, O, S, D> {
-    corrupted: HashMap<K, u32>,
-    resub_tx: Sender<K>,
-    index: HashMap<K, u32>,
-    reverse: Vec<K>,
-    data: Vec<O>,
+pub struct BookKeeper<O, S, D> {
+    corrupted: HashMap<SharedStr, u32>,
+    resub_tx: Sender<SharedStr>,
+    store: IndexedStore<SharedStr, O>,
+    forward_tx: AsyncSender<TransportMsg<SharedStr, OrderbookSnapshot>>,
     _phantom: std::marker::PhantomData<(S, D)>,
 }
 
-impl<K, O, S, D> BookKeeper<K, O, S, D>
+impl<O, S, D> BookKeeper<O, S, D>
 where
-    K: Clone + Eq + Hash + Display,
     O: OrderBook<S, D>,
     S: Debug,
     D: Debug,
 {
-    pub fn new(resub_tx: Sender<K>) -> Self {
+    pub fn new(
+        resub_tx: Sender<SharedStr>,
+        forward_tx: AsyncSender<TransportMsg<SharedStr, OrderbookSnapshot>>,
+    ) -> Self {
         Self {
             corrupted: HashMap::new(),
             resub_tx,
-            index: HashMap::new(),
-            reverse: Vec::new(),
-            data: Vec::new(),
+            store: IndexedStore::new(),
+            forward_tx,
             _phantom: std::marker::PhantomData,
         }
     }
 
     fn reset_books(&mut self) {
-        self.index.clear();
-        self.reverse.clear();
-        self.data.clear();
+        self.store.clear();
         self.corrupted.clear();
     }
 
-    fn handle_snapshot(&mut self, key: K, snapshot: S) {
+    fn forward_data(&self, data: OrderbookSnapshot) {
+        let msg = TransportMsg::HandleData(data);
+        if let Err(e) = self.forward_tx.try_send(msg) {
+            tracing::error!("BOOKKEEPER: forwarding error {e}")
+        }
+    }
+
+    fn forward_terminal(&self, key: SharedStr) {
+        let msg = TransportMsg::RemoveData(key);
+        if let Err(e) = self.forward_tx.try_send(msg) {
+            tracing::error!("BOOKKEEPER: forwarding error {e}")
+        }
+    }
+
+    fn handle_snapshot(&mut self, key: SharedStr, snapshot: S) {
         tracing::info!("snapshot received for {}", key);
 
         if let Some(idx) = self.corrupted.remove(&key) {
-            self.data[idx as usize] = O::from_snapshot(snapshot);
+            self.store
+                .update_data_at(idx as usize, O::from_snapshot(snapshot));
             return;
         }
 
-        let idx = self.data.len() as u32;
-        self.index.insert(key.clone(), idx);
-        self.reverse.push(key);
-        self.data.push(O::from_snapshot(snapshot));
+        self.store.insert(key, O::from_snapshot(snapshot));
     }
 
-    fn handle_diff(&mut self, key: K, diff: D) {
+    fn handle_diff(&mut self, key: SharedStr, diff: D) {
         if self.corrupted.contains_key(&key) {
             // Drop diffs for corrupted books; wait for a snapshot
             return;
         }
 
-        match self.index.get(&key) {
-            Some(&idx) => {
-                let idx = idx as usize;
-                let book = &mut self.data[idx];
+        match self.store.get_mut(&key) {
+            Some(entry) => {
+                let book = entry.data;
                 match book.sequence(&diff) {
-                    OrderbookSequence::Valid => book.update(diff),
-                    OrderbookSequence::Stale => {}
+                    OrderbookSequence::Valid => {
+                        book.update(diff);
+                        let snapshot = book.snapshot(key.clone());
+                        self.forward_data(snapshot);
+                    }
                     OrderbookSequence::Gap => {
                         tracing::info!("gap detected for {}", key);
-                        self.corrupted.insert(key.clone(), idx as u32);
+                        self.corrupted.insert(key.clone(), entry.index);
                         let _ = self.resub_tx.try_send(key);
                     }
+                    OrderbookSequence::Stale => {}
                 }
             }
+
             None => {
                 // Diff arrived before snapshot — common on connect, just drop it
                 tracing::debug!("diff for unknown key {}, waiting for snapshot", key);
@@ -92,34 +109,16 @@ where
         }
     }
 
-    fn handle_terminal(&mut self, key: K) {
+    fn handle_terminal(&mut self, key: SharedStr) {
         tracing::info!("terminal received for {} - removing book", &key);
-        self.remove_book(&key);
+        self.store.remove(&key);
         self.corrupted.remove(&key);
-    }
-
-    /// Swap-remove a book at `idx`, keeping index/reverse_index consistent.
-    fn remove_book(&mut self, key: &K) {
-        if let Some(removed) = self.index.remove(key) {
-            let last = self.data.len() - 1;
-            let removed = removed as usize;
-
-            if removed != last {
-                self.data.swap(removed, last);
-                self.reverse.swap(removed, last);
-                self.index
-                    .insert(self.reverse[removed].clone(), removed as u32);
-            }
-
-            self.data.pop();
-            self.reverse.pop();
-            self.corrupted.remove(key);
-        }
+        self.forward_terminal(key);
     }
 
     pub async fn run(
         &mut self,
-        mut orderbook_rx: Receiver<OrderbookUpdate<K, S, D>>,
+        mut orderbook_rx: Receiver<OrderbookUpdate<S, D>>,
         _connection_reset: Arc<Notify>,
         cancel: CancellationToken,
     ) {
@@ -130,7 +129,6 @@ where
                 msg = orderbook_rx.recv() => {
                     match msg {
                         Some(OrderbookUpdate::Snapshot { key, data }) => {
-
                             self.handle_snapshot(key, data);
                         }
                         Some(OrderbookUpdate::Diff { key, data }) => {

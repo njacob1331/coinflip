@@ -1,11 +1,16 @@
-use crate::{common::OrderbookSequence, gemini::messages::L2DifferentialDepth, traits::OrderBook};
-use std::collections::BTreeMap;
+use crate::{
+    common::{OrderbookSequence, OrderbookSnapshot, SharedStr},
+    gemini::messages::L2DifferentialDepth,
+    traits::OrderBook,
+};
+use std::{collections::BTreeMap, time::Instant};
 
 #[derive(Debug, Clone)]
 pub struct GeminiOrderbook {
     pub bids: BTreeMap<u8, i32>,
     pub asks: BTreeMap<u8, i32>,
     pub last_update_id: u64,
+    pub last_update_ts_ns: u64,
 }
 
 impl OrderBook<L2DifferentialDepth, L2DifferentialDepth> for GeminiOrderbook {
@@ -22,6 +27,7 @@ impl OrderBook<L2DifferentialDepth, L2DifferentialDepth> for GeminiOrderbook {
                 .map(|l| (l.price, l.qty))
                 .collect(),
             last_update_id: snapshot.last_update_id,
+            last_update_ts_ns: snapshot.event_time_ns,
         }
     }
 
@@ -57,6 +63,7 @@ impl OrderBook<L2DifferentialDepth, L2DifferentialDepth> for GeminiOrderbook {
 
     fn update(&mut self, update: L2DifferentialDepth) {
         self.last_update_id = update.last_update_id;
+        self.last_update_ts_ns = update.event_time_ns;
 
         for level in update.bids {
             if level.qty == 0 {
@@ -73,5 +80,21 @@ impl OrderBook<L2DifferentialDepth, L2DifferentialDepth> for GeminiOrderbook {
                 self.asks.insert(level.price, level.qty);
             }
         }
+    }
+
+    fn snapshot(&self, id: SharedStr) -> OrderbookSnapshot {
+        OrderbookSnapshot {
+            id,
+            mid: self.mid(),
+            ts: self.last_update_ts_ns,
+        }
+    }
+
+    fn mid(&self) -> Option<u16> {
+        let best_bid = *self.bids.keys().next_back()?;
+        let best_ask = *self.asks.keys().next()?;
+        let mid = (best_bid + best_ask / 2) as u16;
+
+        Some(mid * 100)
     }
 }

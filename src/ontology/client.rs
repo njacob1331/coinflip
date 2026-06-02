@@ -62,4 +62,21 @@ impl WikiDataClient {
 
         Ok(parsed)
     }
+
+    pub async fn aliases(&self, item_id: &str) -> Result<SearchResult> {
+        let url =
+            format!("https://www.wikidata.org/w/rest.php/wikibase/v1/items/{item_id}/aliases");
+
+        let res = self
+            .inner
+            .get(&url)
+            .query(&[("item_id", item_id), ("language", "en")])
+            .send()
+            .await
+            .with_context(|| format!("request to {} failed", url))?;
+
+        let parsed: SearchResult = res.json().await?;
+
+        Ok(parsed)
+    }
 }

@@ -4,7 +4,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     bookkeeper::BookKeeper,
-    common::SharedStr,
+    common::{OrderbookSnapshot, SharedStr},
     gemini::{
         client::GeminiClient,
         messages::{L2DifferentialDepth, Subscriptions},
@@ -15,11 +15,16 @@ use crate::{
         types::BinaryPredictionMarket,
     },
     session::{Payload, Request, SessionManager},
-    stats::matcher::{MetadataTransportMsg, StructuralCorrelationGraph},
+    stats::{
+        TransportMsg,
+        engine::StatsEngine,
+        matcher::{MetadataTransportMsg, StructuralCorrelationGraph},
+    },
 };
 
 mod bookkeeper;
 mod common;
+mod data_structures;
 mod gemini;
 mod metadata;
 mod ontology;
@@ -43,15 +48,14 @@ fn init_tracing() {
 #[tokio::main]
 async fn main() -> Result<()> {
     init_tracing();
-
     let shutdown = CancellationToken::new();
 
-    // the type on Request should be something like enum GeminiSend
-    // which carries every possible type that can be sent via gemini ws
     let (request_tx, request_rx) = tokio::sync::mpsc::channel::<Payload<Subscriptions>>(32);
     let (resub_tx, resub_rx) = tokio::sync::mpsc::channel::<SharedStr>(32);
     let (market_metadata_tx, mut market_metadata_rx) =
         tokio::sync::mpsc::channel::<MetadataTransportMsg<BinaryPredictionMarket>>(32);
+    let (stats_tx, stats_rx) =
+        kanal::bounded_async::<TransportMsg<SharedStr, OrderbookSnapshot>>(256);
 
     let parser = GeminiParser::new();
     let mut router = GeminiRouter::new();
@@ -62,8 +66,8 @@ async fn main() -> Result<()> {
     let contract_metadata_rx = router.contract_metadata_rx();
 
     let mut bookeeper =
-        BookKeeper::<Arc<str>, GeminiOrderbook, L2DifferentialDepth, L2DifferentialDepth>::new(
-            resub_tx,
+        BookKeeper::<GeminiOrderbook, L2DifferentialDepth, L2DifferentialDepth>::new(
+            resub_tx, stats_tx,
         );
     let client = Arc::new(GeminiClient::new());
     let mut session_manager = SessionManager::new();
@@ -73,6 +77,11 @@ async fn main() -> Result<()> {
     let matcher_task = tokio::spawn(async move {
         let mut matcher = StructuralCorrelationGraph::new();
         matcher.run(&mut market_metadata_rx).await;
+    });
+
+    let price_corr_task = tokio::spawn(async move {
+        let mut corr = StatsEngine::new();
+        corr.run(stats_rx).await;
     });
 
     let metadata_task = tokio::spawn(async move {

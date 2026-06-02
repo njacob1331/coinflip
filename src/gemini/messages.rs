@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize, Serializer};
 use crate::{
     common::SharedStr,
     session::{Payload, Priority, Request},
-    traits::Prioritize,
+    traits::{NormalizedPriceLevel, Prioritize},
     utils::parsing::deserialize_sharedstr,
 };
 use serde::Deserializer;
@@ -219,9 +219,8 @@ pub struct SubscriptionErrorMsg {
 pub struct L2DifferentialDepth {
     // #[serde(rename = "e")]
     // pub event_type: String,
-
-    // #[serde(rename = "E")]
-    // pub event_time_ns: u64,
+    #[serde(rename = "E")]
+    pub event_time_ns: u64,
     #[serde(rename = "s")]
     #[serde(deserialize_with = "deserialize_sharedstr")]
     pub symbol: SharedStr,
@@ -245,6 +244,15 @@ pub struct PriceLevel {
     pub price: u8,
     #[serde(deserialize_with = "deserialize_gemini_prediction_market_qty")]
     pub qty: i32,
+}
+
+impl NormalizedPriceLevel for PriceLevel {
+    fn normalize(&self) -> (f64, f64) {
+        let price = (self.price / 100) as f64;
+        let qty = (self.qty / 100) as f64;
+
+        (price, qty)
+    }
 }
 
 #[inline]
