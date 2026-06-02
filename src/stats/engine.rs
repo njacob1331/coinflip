@@ -1,40 +1,46 @@
-// use std::collections::VecDeque;
+use kanal::AsyncReceiver;
 
-// use crate::{stats::matcher::StructuralCorrelationGraph, traits::Observable};
+use crate::{
+    common::{OrderbookSnapshot, SharedStr},
+    data_structures::IndexedMatrix,
+    stats::{Observation, TransportMsg, observation::Timescale, stratify::Stratifier},
+};
 
-// struct ObservationWindow<T> {
-//     observations: VecDeque<T>,
-//     capacity: usize,
-// }
+pub struct StatsEngine {
+    matrix: IndexedMatrix<SharedStr, Observation<Option<u16>>>,
+    stratifier: Stratifier,
+}
 
-// impl<T> ObservationWindow<T> {
-//     fn new(capacity: usize) -> Self {
-//         Self {
-//             observations: VecDeque::with_capacity(capacity),
-//             capacity,
-//         }
-//     }
+impl StatsEngine {
+    pub fn new() -> Self {
+        Self {
+            matrix: IndexedMatrix::new(100),
+            stratifier: Stratifier::new(),
+        }
+    }
 
-//     fn update(&mut self, obs: T) {
-//         if self.observations.len() == self.capacity {
-//             self.observations.pop_front();
-//         }
+    fn preprocess(&mut self, data: OrderbookSnapshot) -> Observation<Option<u16>> {
+        let mut obs: Observation<Option<u16>> = data.into();
 
-//         self.observations.push_back(obs);
-//     }
-// }
+        match obs.timescale {
+            Timescale::Nano => obs.ts = obs.ts / 1_000_000,
+            _ => {}
+        }
 
-// struct StatsEngine<O> {
-//     similarity_graph: StructuralCorrelationGraph<O>,
-// }
+        self.stratifier.stratify(&mut obs, 100_000);
 
-// impl<O> StatsEngine<O>
-// where
-//     O: Observable,
-// {
-//     fn new() -> Self {
-//         Self {
-//             similarity_graph: StructuralCorrelationGraph::new(),
-//         }
-//     }
-// }
+        obs
+    }
+
+    pub async fn run(&mut self, rx: AsyncReceiver<TransportMsg<SharedStr, OrderbookSnapshot>>) {
+        while let Ok(msg) = rx.recv().await {
+            match msg {
+                TransportMsg::HandleData(data) => {
+                    let obs = self.preprocess(data);
+                    self.matrix.push(&obs.id.clone(), obs)
+                }
+                TransportMsg::RemoveData(index) => self.matrix.remove(&index),
+            }
+        }
+    }
+}

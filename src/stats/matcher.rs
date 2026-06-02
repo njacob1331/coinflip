@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use tokio::sync::mpsc::Receiver;
 
-use crate::{stats::ml::EmbeddingModel, traits::Metadata};
+use crate::traits::Metadata;
 use slotmap::{SlotMap, new_key_type};
 
 // ── Correlation ───────────────────────────────────────────────────────────────
