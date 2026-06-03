@@ -52,3 +52,102 @@ impl<T> Cache<T> {
         self.inner.take()
     }
 }
+
+use std::{
+    collections::{HashMap, hash_map::Entry},
+    hash::Hash,
+    sync::{
+        Arc,
+        atomic::{AtomicU32, Ordering},
+    },
+};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct GlobalId(u32);
+
+impl GlobalId {
+    const SOURCE_BITS: u32 = 2;
+    const LOCAL_BITS: u32 = 32 - Self::SOURCE_BITS;
+    const MAX_SOURCE_ID: u32 = (1 << Self::SOURCE_BITS) - 1;
+    const MAX_LOCAL_ID: u32 = (1 << Self::LOCAL_BITS) - 1;
+    const LOCAL_MASK: u32 = Self::MAX_LOCAL_ID;
+
+    fn new(source_id: u32, local_id: u32) -> Self {
+        Self((source_id << Self::LOCAL_BITS) | local_id)
+    }
+
+    fn source_id(self) -> u32 {
+        self.0 >> Self::LOCAL_BITS
+    }
+
+    fn local_id(self) -> u32 {
+        self.0 & Self::LOCAL_MASK
+    }
+}
+
+#[derive(Debug)]
+pub struct Interned<T> {
+    pub id: GlobalId,
+    pub inner: T,
+}
+
+#[derive(Debug)]
+struct Interner<K> {
+    id: u32,
+    index: HashMap<K, GlobalId>,
+    reverse: Vec<Option<K>>,
+}
+
+impl<K> Interner<K>
+where
+    K: Clone + Hash + Eq,
+{
+    fn new(id_generator: Arc<AtomicU32>) -> Self {
+        let id = id_generator.fetch_add(1, Ordering::Relaxed);
+
+        Self {
+            id,
+            index: HashMap::new(),
+            reverse: Vec::new(),
+        }
+    }
+
+    fn intern(&mut self, key: K) -> GlobalId {
+        match self.index.entry(key) {
+            Entry::Occupied(entry) => *entry.get(),
+            Entry::Vacant(entry) => {
+                let local_id = self.reverse.len() as u32;
+                let global_id = GlobalId::new(self.id, local_id);
+
+                self.reverse.push(Some(entry.key().clone()));
+                entry.insert(global_id);
+
+                global_id
+            }
+        }
+    }
+
+    fn lookup(&self, id: GlobalId) -> Option<&K> {
+        if id.source_id() != self.id {
+            return None;
+        }
+
+        self.reverse.get(id.local_id() as usize)?.as_ref()
+    }
+
+    fn remove(&mut self, key: &K) -> Option<K> {
+        let id = self.index.remove(key)?;
+
+        if id.source_id() != self.id {
+            return None;
+        }
+
+        self.reverse.get_mut(id.local_id() as usize)?.take()
+    }
+
+    fn wrap<T>(&mut self, key: K, data: T) -> Interned<T> {
+        let id = self.intern(key);
+
+        Interned { id, inner: data }
+    }
+}
