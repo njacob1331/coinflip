@@ -151,3 +151,394 @@ where
         Interned { id, inner: data }
     }
 }
+
+use std::{borrow::Borrow, collections::HashMap, hash::Hash};
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct Observation<T> {
+    pub ts: u64,
+    pub value: T,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum WindowOrdering {
+    Within,
+    Before,
+    After,
+}
+
+#[derive(Debug)]
+pub struct Window<K, V> {
+    start: u64,
+    end: u64,
+    observations: HashMap<K, Vec<Observation<V>>>,
+}
+
+impl<K, V> Window<K, V>
+where
+    K: Hash + Eq,
+{
+    fn new(start: u64, end: u64) -> Self {
+        Self {
+            start,
+            end,
+            observations: HashMap::new(),
+        }
+    }
+
+    fn cmp_obs(&self, obs: &Observation<V>) -> WindowOrdering {
+        if obs.ts < self.start {
+            WindowOrdering::Before
+        } else if obs.ts >= self.end {
+            WindowOrdering::After
+        } else {
+            WindowOrdering::Within
+        }
+    }
+
+    fn push(&mut self, id: K, obs: Observation<V>) {
+        debug_assert!(self.start <= obs.ts && obs.ts < self.end);
+
+        let observations = self.observations.entry(id).or_default();
+
+        if observations.last().is_none_or(|last| obs.ts >= last.ts) {
+            observations.push(obs);
+            return;
+        }
+
+        let index = observations.partition_point(|existing| existing.ts <= obs.ts);
+
+        observations.insert(index, obs);
+    }
+}
+
+#[derive(Debug)]
+pub struct WindowView<'a, K, V> {
+    window: Option<&'a Window<K, V>>,
+}
+
+impl<'a, K, V> WindowView<'a, K, V>
+where
+    K: Hash + Eq,
+{
+    pub fn query(self, id: &K) -> Query<impl Iterator<Item = &'a Observation<V>>> {
+        self.window
+            .and_then(|window| window.observations.get(id))
+            .into_iter()
+            .flatten()
+            .into()
+    }
+
+    pub fn query_multiple<I>(self, ids: I) -> Query<impl Iterator<Item = &'a Observation<V>>>
+    where
+        I: IntoIterator,
+        I::Item: Borrow<K>,
+    {
+        let window = self.window;
+
+        ids.into_iter()
+            .flat_map(move |id| {
+                window
+                    .and_then(|window| window.observations.get(id.borrow()))
+                    .into_iter()
+                    .flatten()
+            })
+            .into()
+    }
+}
+
+pub struct Query<I> {
+    iter: I,
+}
+
+impl<I> From<I> for Query<I>
+where
+    I: Iterator,
+{
+    fn from(value: I) -> Self {
+        Self { iter: value }
+    }
+}
+
+impl<I> Iterator for Query<I>
+where
+    I: Iterator,
+{
+    type Item = I::Item;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.iter.next()
+    }
+}
+
+impl<'a, I, V> Query<I>
+where
+    I: Iterator<Item = &'a Observation<V>>,
+    V: 'a,
+{
+    pub fn values(self) -> impl Iterator<Item = &'a V> {
+        self.map(|obs| &obs.value)
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum LogResult<T> {
+    Success,
+    Rejected(T),
+}
+
+impl<T> LogResult<T> {
+    fn success(&self) -> bool {
+        matches!(self, Self::Success)
+    }
+
+    fn rejected(&self) -> bool {
+        matches!(self, Self::Rejected(_))
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub enum LogBehavior {
+    StrictlySequential,
+    #[default]
+    CurrentOrFuture,
+    Lax,
+}
+
+#[derive(Debug)]
+pub struct TimeSeries<K, V> {
+    windows: Vec<Window<K, V>>,
+    window_size_ms: u64,
+    log_behavior: LogBehavior,
+}
+
+impl<K, V> TimeSeries<K, V>
+where
+    K: Hash + Eq,
+{
+    pub fn new(window_size_ms: u64, log_behavior: LogBehavior) -> Self {
+        Self {
+            windows: Vec::new(),
+            window_size_ms,
+            log_behavior,
+        }
+    }
+
+    pub fn num_windows(&self) -> usize {
+        self.windows.len()
+    }
+
+    /// Returns a view into the current window of the timeseries if one exists
+    pub fn current(&self) -> WindowView<'_, K, V> {
+        WindowView {
+            window: self.windows.last(),
+        }
+    }
+
+    pub fn last_n(&self, n: usize) {
+        let n = n.saturating_sub(1);
+        let last = self.num_windows().saturating_sub(1);
+
+        let _slice = self.windows.get(n..last);
+    }
+
+    fn bucket_start(&self, ts: u64) -> u64 {
+        (ts / self.window_size_ms) * self.window_size_ms
+    }
+
+    fn bucket_end(&self, start: u64) -> u64 {
+        start
+            .checked_add(self.window_size_ms)
+            .expect("window end timestamp overflowed")
+    }
+
+    /// transforms the value in place with the provided closure then logs
+    pub fn transform_and_log<T>(
+        &mut self,
+        id: K,
+        mut obs: Observation<V>,
+        transform: T,
+    ) -> LogResult<Observation<V>>
+    where
+        T: FnOnce(&mut V),
+    {
+        transform(&mut obs.value);
+        self.log(id, obs)
+    }
+
+    pub fn log(&mut self, id: K, obs: Observation<V>) -> LogResult<Observation<V>> {
+        let start = self.bucket_start(obs.ts);
+
+        match self.log_behavior {
+            LogBehavior::CurrentOrFuture => match self.windows.last_mut() {
+                Some(current) => match current.cmp_obs(&obs) {
+                    WindowOrdering::Within => {
+                        current.push(id, obs);
+                        LogResult::Success
+                    }
+                    WindowOrdering::Before => LogResult::Rejected(obs),
+                    WindowOrdering::After => {
+                        let end = self.bucket_end(start);
+                        let mut window = Window::new(start, end);
+                        window.push(id, obs);
+                        self.windows.push(window);
+                        LogResult::Success
+                    }
+                },
+                None => {
+                    let end = self.bucket_end(start);
+
+                    let mut window = Window::new(start, end);
+                    window.push(id, obs);
+
+                    self.windows.push(window);
+
+                    LogResult::Success
+                }
+            },
+
+            LogBehavior::StrictlySequential => {
+                match self.windows.last().map(|window| window.start) {
+                    None => {
+                        let end = self.bucket_end(start);
+
+                        let mut window = Window::new(start, end);
+                        window.push(id, obs);
+
+                        self.windows.push(window);
+
+                        LogResult::Success
+                    }
+                    Some(current_start) if start < current_start => LogResult::Rejected(obs),
+                    Some(current_start) if start == current_start => {
+                        let index = self.windows.len() - 1;
+                        self.windows[index].push(id, obs);
+
+                        LogResult::Success
+                    }
+                    Some(current_start) => {
+                        let next_start = current_start
+                            .checked_add(self.window_size_ms)
+                            .expect("window start timestamp overflowed");
+
+                        if start == next_start {
+                            let end = self.bucket_end(start);
+
+                            let mut window = Window::new(start, end);
+                            window.push(id, obs);
+
+                            self.windows.push(window);
+
+                            LogResult::Success
+                        } else {
+                            LogResult::Rejected(obs)
+                        }
+                    }
+                }
+            }
+
+            LogBehavior::Lax => {
+                let end = self.bucket_end(start);
+
+                match self
+                    .windows
+                    .binary_search_by_key(&start, |window| window.start)
+                {
+                    Ok(index) => {
+                        self.windows[index].push(id, obs);
+                    }
+                    Err(index) => {
+                        let mut window = Window::new(start, end);
+                        window.push(id, obs);
+
+                        self.windows.insert(index, window);
+                    }
+                }
+
+                LogResult::Success
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    use crate::{LogBehavior, LogResult, Observation, TimeSeries};
+
+    fn ts() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64
+    }
+
+    #[test]
+    fn init() {
+        let mut series = TimeSeries::new(10, LogBehavior::default());
+
+        series.log(0, Observation { ts: 1, value: 10 });
+        series.log(0, Observation { ts: 2, value: 20 });
+        series.log(0, Observation { ts: 3, value: 30 });
+
+        assert!(series.num_windows() == 1);
+    }
+
+    #[test]
+    fn log_behavior() {
+        let mut series = TimeSeries::new(1, LogBehavior::default());
+        let mut lax_series = TimeSeries::new(1, LogBehavior::Lax);
+
+        assert!(series.log(0, Observation { ts: 1, value: 10 }).success());
+        assert!(series.log(0, Observation { ts: 2, value: 20 }).success());
+        assert!(series.log(0, Observation { ts: 1, value: 10 }).rejected());
+
+        // lax
+        assert!(
+            lax_series
+                .log(0, Observation { ts: 1, value: 10 })
+                .success()
+        );
+        assert!(
+            lax_series
+                .log(0, Observation { ts: 2, value: 20 })
+                .success()
+        );
+        assert!(
+            lax_series
+                .log(0, Observation { ts: 1, value: 10 })
+                .success()
+        );
+    }
+}
+
+// #[test]
+// fn transform_and_log() {
+//     let mut series = TimeSeries::new(1);
+
+//     series.transform_and_log(0, Observation { ts: 1, value: 10 }, |obs| *obs *= 2);
+
+//     let value = series.current().query(&0).values().next().unwrap();
+
+//     assert_eq!(&20, value)
+// }
+
+// #[test]
+// fn query() {
+//     let mut timeseries = TimeSeries::new(100);
+
+//     let mut sum = 0;
+
+//     for i in 0..10 {
+//         let obs = Observation { ts: i, value: i };
+//         timeseries.log(0, obs);
+
+//         sum += i;
+//     }
+
+//     let query_result: u64 = timeseries.current().query(&0).values().sum();
+
+//     assert_eq!(sum, query_result)
+// }
+
