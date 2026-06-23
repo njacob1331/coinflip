@@ -542,3 +542,377 @@ mod tests {
 //     assert_eq!(sum, query_result)
 // }
 
+
+///
+
+use ahash::{HashMap, HashMapExt};
+use std::{borrow::Borrow, hash::Hash};
+
+extern crate self as ts_rs;
+
+pub use macros::Observation;
+
+pub trait Observation {
+    const FIELDS: &'static [&'static str];
+
+    type Values<'a>
+    where
+        Self: 'a;
+
+    fn timestamp(&self) -> u64;
+
+    fn values(&self) -> Self::Values<'_>;
+}
+
+pub trait Metric<T> {
+    fn init() -> Self;
+    fn update(&mut self, new: &T);
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum Timescale {
+    Millis,
+    Nanos,
+    Secs,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum WindowOrdering {
+    Within,
+    Before,
+    After,
+}
+
+#[derive(Debug)]
+pub struct Window<K, V> {
+    start: u64,
+    end: u64,
+    observations: HashMap<K, Vec<V>>,
+}
+
+impl<K, V> Window<K, V>
+where
+    K: Hash + Eq,
+    V: Observation,
+{
+    fn new(start: u64, end: u64) -> Self {
+        Self {
+            start,
+            end,
+            observations: HashMap::new(),
+        }
+    }
+
+    fn cmp_obs(&self, obs: &V) -> WindowOrdering {
+        let timestamp = obs.timestamp();
+
+        if timestamp < self.start {
+            WindowOrdering::Before
+        } else if timestamp >= self.end {
+            WindowOrdering::After
+        } else {
+            WindowOrdering::Within
+        }
+    }
+
+    /// Pushes an item into the window categorized by id.
+    /// This method does not enforce strict ordering.
+    fn push(&mut self, id: K, obs: V) {
+        self.observations.entry(id).or_default().push(obs);
+    }
+
+    /// Pushes an item into the window categorized by id ONLY IF the provided observation is
+    /// the same time as or after the last recorded observation.
+    fn try_push(&mut self, id: K, obs: V) -> Result<(), V> {
+        let observations = self.observations.entry(id).or_default();
+
+        if observations
+            .last()
+            .is_some_and(|last| obs.timestamp() < last.timestamp())
+        {
+            return Err(obs);
+        }
+
+        observations.push(obs);
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+pub struct WindowView<'a, K, V> {
+    window: Option<&'a Window<K, V>>,
+}
+
+impl<'a, K, V> WindowView<'a, K, V>
+where
+    K: Hash + Eq,
+{
+    pub fn query(self, id: &K) -> Query<impl Iterator<Item = &'a V>> {
+        self.window
+            .and_then(|window| window.observations.get(id))
+            .into_iter()
+            .flatten()
+            .into()
+    }
+
+    pub fn query_multiple<I>(self, ids: I) -> Query<impl Iterator<Item = &'a V>>
+    where
+        I: IntoIterator,
+        I::Item: Borrow<K>,
+    {
+        let window = self.window;
+
+        ids.into_iter()
+            .flat_map(move |id| {
+                window
+                    .and_then(|window| window.observations.get(id.borrow()))
+                    .into_iter()
+                    .flatten()
+            })
+            .into()
+    }
+}
+
+pub struct Query<I> {
+    iter: I,
+}
+
+impl<I> From<I> for Query<I>
+where
+    I: Iterator,
+{
+    fn from(value: I) -> Self {
+        Self { iter: value }
+    }
+}
+
+impl<I> Iterator for Query<I>
+where
+    I: Iterator,
+{
+    type Item = I::Item;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.iter.next()
+    }
+}
+
+impl<'a, I, V> Query<I>
+where
+    I: Iterator<Item = &'a V>,
+    V: Observation + 'a,
+{
+    pub fn values(self) -> impl Iterator<Item = V::Values<'a>> {
+        self.map(|obs| obs.values())
+    }
+}
+
+/// Controls how tolerant the time series is to out-of-order observations.
+/// By default, the series will tolerate out-of-order observations as long
+/// as they fall within the current window.
+#[derive(Debug, Default, Clone, Copy)]
+pub enum Tolerance {
+    None,
+    #[default]
+    WithinWindow,
+    AcrossWindows,
+}
+
+#[derive(Debug)]
+pub struct TimeSeries<K, V> {
+    windows: Vec<Window<K, V>>,
+    window_size_ms: u64,
+    tolerance: Tolerance,
+}
+
+impl<K, V> TimeSeries<K, V>
+where
+    K: Hash + Eq,
+    V: Observation,
+{
+    pub fn new(window_size_ms: u64, tolerance: Tolerance) -> Self {
+        Self {
+            windows: Vec::new(),
+            window_size_ms,
+            tolerance,
+        }
+    }
+
+    pub fn num_windows(&self) -> usize {
+        self.windows.len()
+    }
+
+    /// Returns a view into the current window of the timeseries if one exists
+    pub fn current(&self) -> WindowView<'_, K, V> {
+        WindowView {
+            window: self.windows.last(),
+        }
+    }
+
+    #[inline]
+    fn compute_bounds(&self, obs: &V) -> (u64, u64) {
+        let lower_bounds = (obs.timestamp() / self.window_size_ms) * self.window_size_ms;
+        let upper_bounds = lower_bounds + self.window_size_ms;
+
+        (lower_bounds, upper_bounds)
+    }
+
+    fn create_window(&mut self, id: K, obs: V) {
+        let (start, end) = self.compute_bounds(&obs);
+
+        let mut window = Window::new(start, end);
+        window.push(id, obs);
+
+        self.windows.push(window);
+    }
+
+    /// transforms the value in place with the provided closure then logs
+    pub fn transform_and_record<T>(&mut self, id: K, mut obs: V, transform: T) -> Result<(), V>
+    where
+        T: FnOnce(&mut V),
+    {
+        transform(&mut obs);
+        self.record(id, obs)
+    }
+
+    pub fn record(&mut self, id: K, obs: V) -> Result<(), V> {
+        match self.tolerance {
+            Tolerance::None => {
+                let Some(current) = self.windows.last_mut() else {
+                    self.create_window(id, obs);
+                    return Ok(());
+                };
+
+                match current.cmp_obs(&obs) {
+                    WindowOrdering::Within => current.try_push(id, obs),
+                    WindowOrdering::After => {
+                        self.create_window(id, obs);
+                        Ok(())
+                    }
+                    WindowOrdering::Before => Err(obs),
+                }
+            }
+
+            Tolerance::WithinWindow => {
+                let Some(current) = self.windows.last_mut() else {
+                    self.create_window(id, obs);
+                    return Ok(());
+                };
+
+                match current.cmp_obs(&obs) {
+                    WindowOrdering::Within => current.push(id, obs),
+                    WindowOrdering::After => self.create_window(id, obs),
+                    WindowOrdering::Before => return Err(obs),
+                }
+
+                Ok(())
+            }
+
+            Tolerance::AcrossWindows => {
+                let (start, end) = self.compute_bounds(&obs);
+
+                match self
+                    .windows
+                    .binary_search_by_key(&start, |window| window.start)
+                {
+                    Ok(index) => {
+                        self.windows[index].push(id, obs);
+                    }
+                    Err(index) => {
+                        let mut window = Window::new(start, end);
+                        window.push(id, obs);
+
+                        self.windows.insert(index, window);
+                    }
+                }
+
+                Ok(())
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    use crate::{Observation, TimeSeries, Tolerance};
+
+    fn ts() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64
+    }
+
+    #[derive(Observation, Debug, Clone, Copy)]
+    #[observation(timestamp = ts, fields(temp, humidity))]
+    struct SensorReading {
+        ts: u64,
+        temp: f64,
+        humidity: f64,
+    }
+
+    #[test]
+    fn init() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut series = TimeSeries::new(10, Tolerance::default());
+
+        std::thread::spawn(move || {
+            for _ in 0..100 {
+                tx.send(SensorReading {
+                    ts: ts(),
+                    temp: 88.0,
+                    humidity: 1.0,
+                })
+                .unwrap();
+
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        });
+
+        while let Ok(reading) = rx.recv() {
+            // this method may fail based on our tolerance
+            // in the case, we know it won't so we unwrap
+            series.record("Atlanta", reading).unwrap()
+        }
+
+        println!("{series:#?}")
+    }
+
+    #[test]
+    fn tolerance() {
+        let one = SensorReading {
+            ts: 0,
+            temp: 87.0,
+            humidity: 2.0,
+        };
+
+        let two = SensorReading {
+            ts: 1,
+            temp: 88.0,
+            humidity: 2.0,
+        };
+
+        let three = SensorReading {
+            ts: 0,
+            temp: 87.2,
+            humidity: 2.0,
+        };
+
+        let mut default = TimeSeries::new(1, Tolerance::default());
+        assert!(default.record("Atlanta", one).is_ok());
+        // new window created here
+        assert!(default.record("Atlanta", two).is_ok());
+        assert!(default.record("Atlanta", three).is_err());
+
+        let mut lax = TimeSeries::new(1, Tolerance::AcrossWindows);
+        assert!(lax.record("Atlanta", one).is_ok());
+        // new window created here
+        assert!(lax.record("Atlanta", two).is_ok());
+        assert!(lax.record("Atlanta", three).is_ok());
+    }
+}
+
+
+
